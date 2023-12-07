@@ -1,0 +1,998 @@
+// Include standard headers
+#include <stdio.h>
+#include <stdlib.h>
+#include <vector>
+#include <list>
+#include <thread>
+
+// Include GLEW
+#include <GL/glew.h>
+
+// Include GLFW
+#include <GLFW/glfw3.h>
+GLFWwindow* window;
+
+// Include GLM
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+using namespace glm;
+
+#include <common/shader.hpp>
+#include <common/texture.hpp>
+#include <common/controls.hpp>
+#include <common/objloader.hpp>
+#include <common/vboindexer.hpp>
+
+#define MY_PI_HALF	(3.1415926f / 2.0f)
+#define BOUND_X_MIN		(-20.0f)
+#define BOUND_X_MAX		( 20.0f)
+#define BOUND_Y_MIN		(-20.0f)
+#define BOUND_Y_MAX		( 20.0f)
+#define BOUND_Z_MIN		( -2.0f)
+#define BOUND_Z_MAX		( 20.0f)
+
+static const GLfloat g_ground_vect_buf_data[] = { 
+	-1.0f,-1.0f, 0.0f,
+	-1.0f, 1.0f, 0.0f,
+	 1.0f, 1.0f, 0.0f,
+	 1.0f, 1.0f, 0.0f,
+	 1.0f,-1.0f, 0.0f,
+	-1.0f,-1.0f, 0.0f,
+};
+
+static const GLfloat g_ground_uv_buf_data[] = { 
+	 0.0f, 0.0f,
+	 0.0f, 1.0f,
+	 1.0f, 1.0f,
+	 1.0f, 1.0f,
+	 1.0f, 0.0f,
+	 0.0f, 0.0f,
+};
+
+static const GLfloat g_ground_norm_buf_data[] = { 
+	0.000f,  0.000f,  1.000f,
+	0.000f,  0.000f,  1.000f,
+	0.000f,  0.000f,  1.000f,
+	0.000f,  0.000f,  1.000f,
+	0.000f,  0.000f,  1.000f,
+	0.000f,  0.000f,  1.000f,
+};
+
+
+class Sphere {	
+	public: 
+	
+	float x;
+	float y;
+	float z;
+	float r;
+	
+	Sphere() {}
+	Sphere(float x, float y, float z, float r) : x{x}, y{y}, z{z}, r{r} {}
+	
+	static void get_relation(Sphere const & a, Sphere const & b, float & angle_xy, float & angle_z, float & dist) {
+		float x_diff = b.x - a.x;
+		float y_diff = b.y - a.y;
+		float z_diff = b.z - a.z;
+		
+		float xy_diff_sq = x_diff * x_diff + y_diff * y_diff;
+		float z_diff_sq = z_diff * z_diff;
+		
+		angle_xy = atan2(y_diff, x_diff);
+		angle_z = atan2(z_diff_sq, xy_diff_sq);
+		dist = sqrt(xy_diff_sq + z_diff_sq);
+	}
+	
+	static bool check_is_out_of_bound(Sphere const &a, float x_min, float x_max, float y_min, float y_max, float z_min, float z_max) {
+		return (a.x < x_min) || (a.x > x_max) || (a.y < y_min) || (a.y > y_max) || (a.z < z_min) || (a.z > z_max);
+	}
+	
+	static bool check_is_out_of_bound(Sphere const &a) {
+		return check_is_out_of_bound(a, BOUND_X_MIN, BOUND_X_MAX, BOUND_Y_MIN, BOUND_Y_MAX, BOUND_Z_MIN, BOUND_Z_MAX);
+	}
+	
+	static bool check_is_collided(Sphere const & a, Sphere const & b) {
+		if (&a == &b) {
+			return false; 
+		}
+		
+		float x_diff = a.x - b.x;
+		float y_diff = a.y - b.y;
+		float z_diff = a.z - b.z;
+		float r_sum = a.r + b.r;
+		
+		return (x_diff * x_diff + y_diff * y_diff + z_diff * z_diff) < (r_sum * r_sum); 
+	}
+	
+	void get_relation(Sphere const & b, float & angle_xy, float & angle_z, float & dist) const {
+		Sphere::get_relation(*this, b, angle_xy, angle_z, dist);
+	}
+	
+	bool check_is_out_of_bound(float x_min, float x_max, float y_min, float y_max, float z_min, float z_max) const {
+		return Sphere::check_is_out_of_bound(*this, x_min, x_max, y_min, y_max, z_min, z_max);
+	}
+	
+	bool check_is_out_of_bound() const {
+		return Sphere::check_is_out_of_bound(*this);
+	}
+	
+	bool check_is_collided(Sphere const & b) const {
+		return Sphere::check_is_collided(*this, b);
+	}
+	
+	void move(float angle_xy, float angle_z, float dist) {
+		this->x += dist * cos(angle_z) * cos(angle_xy);
+		this->y += dist * cos(angle_z) * sin(angle_xy);
+		this->z += dist * sin(angle_z);
+	}
+	
+	glm::mat4 get_model_matrix() const {
+		glm::mat4 scale_mat = glm::scale(glm::mat4(1.0f), glm::vec3(this->r, this->r, this->r));
+		glm::mat4 trans_mat = glm::translate(glm::mat4(), glm::vec3(this->x, this->y, this->z));
+		glm::mat4 rotat_mat = glm::rotate( glm::mat4(1.0f), 0.0f, glm::vec3(0, 0, 1) );
+		glm::mat4 model_mat = trans_mat * rotat_mat * scale_mat;
+		
+		return model_mat;
+	}
+	
+};
+
+class Obst : public Sphere {
+	float is_hit_timer;
+	float health;
+	
+	public:
+	
+	Obst(float x, float y, float z, float r) : Sphere(x, y, z, r), health{100.0f}, is_hit_timer{0.0f} {}
+	
+	bool get_is_activated() const {
+		return this->health > 0.0f;
+	}
+	void set_is_activated(bool is_activated) {
+		if (is_activated) {
+			this->health = 100.0f;
+		}
+		else {
+			this->health = 0.0f;
+		}
+	}
+	
+	bool get_is_hit() const {
+		return this->is_hit_timer > 0.0f;
+	}
+	
+	void set_is_hit(bool is_hit) {
+		if (is_hit) {
+			this->is_hit_timer = 0.1f;
+			this->health -= 1.0f;
+		}
+		else {
+			this->is_hit_timer = 0.0f;
+		}
+	}
+	
+	void refreash(float time) {
+		if (this->is_hit_timer > 0.0f) {
+			this->is_hit_timer -= time;
+		}
+	}
+};
+
+class Ammo : public Sphere {
+	bool is_fired;
+	
+	public:
+	float angle_xy;
+	float angle_z;
+	float speed;
+	
+	Ammo() : is_fired(false) {}
+	Ammo(float x, float y, float z, float r, float angle_xy, float angle_z, float speed) : Sphere(x, y, z, r), angle_xy{angle_xy}, angle_z{angle_z}, speed{speed}, is_fired{true} {}
+	
+	bool get_is_fired() const {
+		return this->is_fired;
+	}
+	
+	void set_is_fired(bool is_fired) {
+		this->is_fired = is_fired;
+	}
+	
+	void advance(float time) {
+		this->move(this->angle_xy, this->angle_z, this->speed * time);
+	}
+	
+	void refreash(float time) {
+		// do nothing
+	}
+};
+
+class Tank : public Sphere {
+	float is_hit_timer;
+	float health;
+	
+	public:
+	Tank() : Sphere(0.0f, 0.0f, 0.0f, 1.0f), angle_xy{0.0f}, angle_z{0.0f}, turn_speed{MY_PI_HALF / 6.0f}, advance_speed{3.0f}, max_num_ammo{30}, num_ammo{20}, health{100.0f}, is_hit_timer{0.0f} { }
+	
+	int max_num_ammo;
+	int num_ammo;
+	float advance_speed;
+	float angle_xy;
+	float angle_z;
+	float turn_speed;
+	
+	bool get_is_alive() const {
+		return this->health > 0.0f;
+	}
+	
+	void set_is_alive(bool is_alive) {
+		if (is_alive) {
+			this->health = 100.0f;
+		}
+		else {
+			this->health = 0.0f;
+		}
+	}
+	
+	bool get_is_hit() const {
+		return this->is_hit_timer > 0.0f;
+	}
+	
+	void set_is_hit(bool is_hit) {
+		if (is_hit) {
+			this->is_hit_timer = 0.1f;
+			this->health -= 1.0f;
+		}
+		else {
+			this->is_hit_timer = 0.0f;
+		}
+	}
+	
+	void turn(float angle_xy) {
+		this->angle_xy += angle_xy * this->turn_speed;
+	}
+	
+	void advance(float time) {
+		this->move(this->angle_xy, this->angle_z, this->advance_speed * time);
+	}
+
+	Ammo fire() {
+		float ammo_r = this->r / 4.0f;
+		float ammo_speed = this->advance_speed * 5.0f;
+		Ammo ammo(this->x, this->y, this->z, ammo_r, this->angle_xy, 0.0f, ammo_speed);
+		ammo.advance((this->r + ammo_r) / ammo_speed);
+		return ammo;
+	}
+	
+	void refreash(float time) {
+		if (this->is_hit_timer > 0.0f) {
+			this->is_hit_timer -= time;
+		}
+	}
+	
+	glm::mat4 get_model_matrix() const {
+		glm::mat4 scale_mat = glm::scale(glm::mat4(1.0f), glm::vec3(this->r, this->r, this->r));
+		glm::mat4 trans_mat = glm::translate(glm::mat4(), glm::vec3(this->x, this->y, this->z));
+		glm::mat4 rotat_mat = glm::rotate( glm::mat4(1.0f), this->angle_xy, glm::vec3(0, 0, 1) );
+		glm::mat4 model_mat = trans_mat * rotat_mat * scale_mat;
+		
+		return model_mat;
+	}
+};
+
+typedef struct TankAction_s {
+	float turn_angle_xy;
+	float advance_dist;
+	int is_firing;
+}TankAction_s;
+
+static void get_tank_act_from_user_idx(TankAction_s & tank_act, int user_idx)
+{	
+	tank_act.turn_angle_xy = 0.0f;
+	tank_act.advance_dist = 0.0f;
+	tank_act.is_firing = 0;
+	
+	if (user_idx == 0) {
+		static int cnt = 0;
+		if (glfwGetKey( window, GLFW_KEY_W ) == GLFW_PRESS){
+			tank_act.advance_dist = 1.0f;
+		}
+		if (glfwGetKey( window, GLFW_KEY_S ) == GLFW_PRESS){
+			tank_act.advance_dist = -1.0f;
+		}
+		if (glfwGetKey( window, GLFW_KEY_A ) == GLFW_PRESS){
+			tank_act.turn_angle_xy = 1.0f;
+		}
+		if (glfwGetKey( window, GLFW_KEY_D ) == GLFW_PRESS){
+			tank_act.turn_angle_xy = -1.0f;
+		}
+		if (glfwGetKey( window, GLFW_KEY_F ) == GLFW_PRESS) {
+			cnt ++; 
+		}
+		else if (cnt > 0) {
+			cnt --;
+		}
+		
+		if (cnt > 150) {
+			cnt = 0;
+			tank_act.is_firing = 1;
+		}
+	}
+	else if (user_idx == 1) {
+		static int cnt = 0;
+		if (glfwGetKey( window, GLFW_KEY_I ) == GLFW_PRESS){
+			tank_act.advance_dist = 1.0f;
+		}
+		if (glfwGetKey( window, GLFW_KEY_K ) == GLFW_PRESS){
+			tank_act.advance_dist = -1.0f;
+		}
+		if (glfwGetKey( window, GLFW_KEY_J ) == GLFW_PRESS){
+			tank_act.turn_angle_xy = 1.0f;
+		}
+		if (glfwGetKey( window, GLFW_KEY_L ) == GLFW_PRESS){
+			tank_act.turn_angle_xy = -1.0f;
+		}
+		if (glfwGetKey( window, GLFW_KEY_H ) == GLFW_PRESS) {
+			cnt ++; 
+		}
+		else if (cnt > 0) {
+			cnt --;
+		}
+		
+		if (cnt > 150) {
+			cnt = 0;
+			tank_act.is_firing = 1;
+		}
+	}
+	else {
+		// do nothing
+	}
+}
+
+typedef struct Environment_s {
+	int is_terminated;
+	
+	std::vector<Obst> obst_vec;
+	std::vector<Ammo> ammo_vec;
+	std::vector<Ammo> rain_vec;
+	std::vector<Tank> tank_vec;
+} Environment_s;
+
+static void env_init(Environment_s & env) {
+	env.is_terminated = 0;
+
+	srand(0);
+	
+	for (int obst_idx = 0; obst_idx < 20; obst_idx ++) {
+		float x = BOUND_X_MIN + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (BOUND_X_MAX - BOUND_X_MIN)));
+		float y = BOUND_Y_MIN + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (BOUND_Y_MAX - BOUND_Y_MIN)));
+		float z = 0.0f;
+		float r = 1.0f;
+		
+		Obst obstacle(x, y, z, r);
+		env.obst_vec.push_back(obstacle);
+	}
+	
+	for (int rain_idx = 0; rain_idx < 20; rain_idx ++) {
+		Ammo rain;
+		env.rain_vec.push_back(rain);
+	}
+		
+	Tank tank;
+	tank.x = -5;
+	tank.y = -5;
+	env.tank_vec.push_back(tank);
+	tank.x = 5;
+	tank.y = 5;
+	env.tank_vec.push_back(tank);	
+}
+
+static bool tank_move_and_check(Tank & tank, float angle_xy, float angle_z, float dist, Environment_s & env, int itr_cnt) {
+	if (itr_cnt > 10) {
+		return false;
+	}
+	
+	tank.move(angle_xy, angle_z, dist);
+
+	if (tank.check_is_out_of_bound()) {
+		tank.move(angle_xy, angle_z, -dist);
+		return false;
+	}
+	
+	for (int obst_idx = 0; obst_idx < env.obst_vec.size(); obst_idx ++) {
+		Obst const & obst = env.obst_vec[obst_idx];
+		if (obst.get_is_activated() && Sphere::check_is_collided(tank, obst)) {
+			tank.move(angle_xy, angle_z, -dist);
+			return false;
+		}
+		
+	}
+	
+	for (int tank_idx = 0; tank_idx < env.tank_vec.size(); tank_idx ++) {
+		Tank & tank_collided = env.tank_vec[tank_idx];
+		if (Sphere::check_is_collided(tank, tank_collided)) {
+			float angle_xy_collided = 0.0f;
+			float angle_z_collided = 0.0f;
+			float dist_collided = 0.0f;
+			Sphere::get_relation(tank, tank_collided, angle_xy_collided, angle_z_collided, dist_collided);
+			dist_collided = tank.r + tank_collided.r - dist_collided;
+			
+			if (tank_move_and_check(tank_collided, angle_xy_collided, angle_z_collided, dist_collided, env, itr_cnt + 1)) {
+				break;
+			}
+			else {
+				tank.move(angle_xy, angle_z, -dist);
+				return false;
+			}
+		}
+	}
+	
+	return true;
+}
+
+static bool ammo_move_and_check(Ammo & ammo, float angle_xy, float angle_z, float dist, Environment_s & env) {
+	if (ammo.get_is_fired() == false) {
+		return false;
+	}
+	
+	ammo.move(angle_xy, angle_z, dist);
+	
+	if (ammo.check_is_out_of_bound()) {
+		ammo.set_is_fired(false);
+		return false; 
+	}
+	
+	for (int obst_idx = 0; obst_idx < env.obst_vec.size(); obst_idx ++) {
+		Obst & obst = env.obst_vec[obst_idx];
+		if (obst.get_is_activated() && Sphere::check_is_collided(ammo, obst)) {
+			obst.set_is_hit(true);
+			ammo.set_is_fired(false);
+			return false;
+		}
+	}
+	
+	for (int tank_idx = 0; tank_idx < env.tank_vec.size(); tank_idx ++) {
+		Tank & tank_collided = env.tank_vec[tank_idx];
+		if (Sphere::check_is_collided(ammo, tank_collided)) {
+			float angle_xy_collided = 0.0f;
+			float angle_z_collided = 0.0f;
+			float dist_collided = 0.0f;
+			Sphere::get_relation(ammo, tank_collided, angle_xy_collided, angle_z_collided, dist_collided);
+			dist_collided = ammo.r + tank_collided.r - dist_collided;
+			
+			tank_collided.set_is_hit(true);
+			tank_move_and_check(tank_collided, angle_xy_collided, angle_z_collided, dist_collided * 5.0f, env, 0);
+			
+			ammo.set_is_fired(false);
+			return false;
+		}
+	}
+				
+	return true;
+}
+
+static void env_refresh(Environment_s & env, float time) {
+	for (int obst_idx = 0; obst_idx < env.obst_vec.size(); obst_idx ++) {
+		Obst & obst = env.obst_vec[obst_idx];
+		if (obst.get_is_activated()) {
+			obst.refreash(time);
+		}
+	}
+	
+	for (int tank_idx = 0; tank_idx < env.tank_vec.size(); tank_idx ++) {
+		Tank & tank = env.tank_vec[tank_idx];
+		if (tank.get_is_alive()) {
+			tank.refreash(time);
+		}
+	}
+}
+
+
+static void env_proc_main(Environment_s * p_arg) {
+	// glfwGetTime is called only once, the first time this function is called
+	static double last_time = glfwGetTime();
+	
+	while (p_arg != NULL && p_arg->is_terminated == 0) {
+		Environment_s & env = *p_arg;
+		
+		// Compute time difference between current and last frame
+		double curr_time = glfwGetTime();
+		float delta_time = float(curr_time - last_time);
+		last_time = curr_time;	
+		
+		env_refresh(env, delta_time);
+		
+		TankAction_s tank_act;
+		for (int tank_idx = 0; tank_idx < p_arg->tank_vec.size(); tank_idx ++) {
+			Tank & tank = p_arg->tank_vec[tank_idx];
+			
+			get_tank_act_from_user_idx(tank_act, tank_idx);
+			tank.turn(tank_act.turn_angle_xy * delta_time); 
+			tank_move_and_check(tank, tank.angle_xy, tank.angle_z, tank_act.advance_dist * delta_time, env, 0);
+			if (tank_act.is_firing == 1) {
+				p_arg->ammo_vec.push_back(tank.fire());
+			}
+		}
+		
+		auto ammo_itr = p_arg->ammo_vec.begin();
+		while (ammo_itr != p_arg->ammo_vec.end()) {
+			ammo_move_and_check((*ammo_itr), ammo_itr->angle_xy, ammo_itr->angle_z, ammo_itr->speed * delta_time, env);
+			if (ammo_itr->get_is_fired()) {	
+				ammo_itr ++;
+			}
+			else {
+				ammo_itr = p_arg->ammo_vec.erase(ammo_itr);
+			}
+		}
+		
+		for (int rain_idx = 0; rain_idx < p_arg->rain_vec.size(); rain_idx ++) {
+			Ammo & rain = p_arg->rain_vec[rain_idx];
+			rain.advance(1.0f * delta_time);
+			
+			if (rain.check_is_out_of_bound()) {
+				rain.set_is_fired(false);
+			}
+			
+			if (rain.get_is_fired()) {
+				for (int obst_idx = 0; obst_idx < p_arg->obst_vec.size(); obst_idx ++) {
+					Obst & obst = p_arg->obst_vec[obst_idx];
+					if (obst.get_is_activated() && Sphere::check_is_collided(rain, obst)) {
+						obst.set_is_hit(true);
+						
+						rain.set_is_fired(false);
+					}
+				}
+			}
+			
+			if (rain.get_is_fired()) {
+				for (int tank_idx = 0; tank_idx < p_arg->tank_vec.size(); tank_idx ++) {
+					Tank & tank = p_arg->tank_vec[tank_idx];
+					if (Sphere::check_is_collided(rain, tank)) {
+						tank.set_is_hit(true);
+						
+						rain.set_is_fired(false);
+					}
+				}
+			}
+			
+			if (rain.get_is_fired() == false) {
+				rain.x = BOUND_X_MIN + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (BOUND_X_MAX - BOUND_X_MIN)));
+				rain.y = BOUND_Y_MIN + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (BOUND_Y_MAX - BOUND_Y_MIN)));
+				rain.z = BOUND_Z_MAX;
+				rain.r = 0.1f + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (0.5f - 0.1f)));
+				rain.angle_xy = 0.0f;
+				rain.angle_z = -MY_PI_HALF;
+				rain.speed = 1.0f + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (5.0f - 1.0f)));
+				rain.set_is_fired(true);
+			}
+		}
+	
+		// printf("p_arg->ammo_vec.size() = %d\n", p_arg->ammo_vec.size());
+		
+		// Compute the MVP matrix from keyboard and mouse input
+		computeMatricesFromInputs();
+	}
+}
+
+
+int main( void ) {
+	// Initialise GLFW
+	if( !glfwInit() ) {
+		fprintf( stderr, "Failed to initialize GLFW\n" );
+		getchar();
+		return -1;
+	}
+
+	glfwWindowHint(GLFW_SAMPLES, 4);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE); // To make MacOS happy; should not be needed
+	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+	// Open a window and create its OpenGL context
+	window = glfwCreateWindow( 1024, 768, "Tutorial 09 - Loading with AssImp", NULL, NULL);
+	if( window == NULL ){
+		fprintf( stderr, "Failed to open GLFW window. If you have an Intel GPU, they are not 3.3 compatible. Try the 2.1 version of the tutorials.\n" );
+		getchar();
+		glfwTerminate();
+		return -1;
+	}
+	glfwMakeContextCurrent(window);
+
+	// Initialize GLEW
+	glewExperimental = true; // Needed for core profile
+	if (glewInit() != GLEW_OK) {
+		fprintf(stderr, "Failed to initialize GLEW\n");
+		getchar();
+		glfwTerminate();
+		return -1;
+	}
+
+	// Ensure we can capture the escape key being pressed below
+	glfwSetInputMode(window, GLFW_STICKY_KEYS, GL_TRUE);
+    // Hide the mouse and enable unlimited mouvement
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    
+    // Set the mouse at the center of the screen
+    glfwPollEvents();
+    glfwSetCursorPos(window, 1024/2, 768/2);
+
+	// Dark blue background
+	glClearColor(0.0f, 0.0f, 0.4f, 0.0f);
+
+	// Enable depth test
+	glEnable(GL_DEPTH_TEST);
+	// Accept fragment if it closer to the camera than the former one
+	glDepthFunc(GL_LESS); 
+
+	// Cull triangles which normal is not towards the camera
+	// glEnable(GL_CULL_FACE);
+
+	GLuint VertexArrayID;
+	glGenVertexArrays(1, &VertexArrayID);
+	glBindVertexArray(VertexArrayID);
+
+	// Create and compile our GLSL program from the shaders
+	GLuint programID = LoadShaders( "StandardShading.vertexshader", "StandardShading.fragmentshader" );
+
+	// Get a handle for our "MVP" uniform
+	GLuint MatrixID = glGetUniformLocation(programID, "MVP");
+	GLuint ViewMatrixID = glGetUniformLocation(programID, "V");
+	GLuint ModelMatrixID = glGetUniformLocation(programID, "M");
+
+	// Load the texture
+	GLuint Texture = loadDDS("uvmap.DDS");
+	
+	// Load the texture
+	GLuint ground_texture = loadBMP_custom("spooky_scene.bmp");
+	
+	// Get a handle for our "myTextureSampler" uniform
+	GLuint TextureID  = glGetUniformLocation(programID, "myTextureSampler");
+
+	// Read our .obj file
+	std::vector<unsigned short> indices;
+	std::vector<glm::vec3> indexed_vertices;
+	std::vector<glm::vec2> indexed_uvs;
+	std::vector<glm::vec3> indexed_normals;
+	bool res = loadAssImp("suzanne_ori.obj", indices, indexed_vertices, indexed_uvs, indexed_normals);
+	// bool res = loadAssImp("OBJ.obj", indices, indexed_vertices, indexed_uvs, indexed_normals);
+	if (res == false)
+	{
+		printf("Failed to load obj\n");
+	}
+	// Load it into a VBO
+
+	
+
+	GLuint ground_vert_buf;
+	glGenBuffers(1, &ground_vert_buf);
+	glBindBuffer(GL_ARRAY_BUFFER, ground_vert_buf);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(g_ground_vect_buf_data), g_ground_vect_buf_data, GL_STATIC_DRAW);
+
+	GLuint ground_uv_buf;
+	glGenBuffers(1, &ground_uv_buf);
+	glBindBuffer(GL_ARRAY_BUFFER, ground_uv_buf);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(g_ground_uv_buf_data) * sizeof(glm::vec2), g_ground_uv_buf_data, GL_STATIC_DRAW);
+	
+	GLuint ground_norm_buf;
+	glGenBuffers(1, &ground_norm_buf);
+	glBindBuffer(GL_ARRAY_BUFFER, ground_norm_buf);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(g_ground_norm_buf_data), g_ground_norm_buf_data, GL_STATIC_DRAW);
+	
+	GLuint tank_vect_buf;
+	glGenBuffers(1, &tank_vect_buf);
+	glBindBuffer(GL_ARRAY_BUFFER, tank_vect_buf);
+	glBufferData(GL_ARRAY_BUFFER, indexed_vertices.size() * sizeof(glm::vec3), &indexed_vertices[0], GL_STATIC_DRAW);
+
+	GLuint tank_uv_buf;
+	glGenBuffers(1, &tank_uv_buf);
+	glBindBuffer(GL_ARRAY_BUFFER, tank_uv_buf);
+	glBufferData(GL_ARRAY_BUFFER, indexed_uvs.size() * sizeof(glm::vec2), &indexed_uvs[0], GL_STATIC_DRAW);
+
+	GLuint tank_norm_buf;
+	glGenBuffers(1, &tank_norm_buf);
+	glBindBuffer(GL_ARRAY_BUFFER, tank_norm_buf);
+	glBufferData(GL_ARRAY_BUFFER, indexed_normals.size() * sizeof(glm::vec3), &indexed_normals[0], GL_STATIC_DRAW);
+
+	// Generate a buffer for the indices as well
+	GLuint tank_elem_buf;
+	glGenBuffers(1, &tank_elem_buf);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, tank_elem_buf);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned short), &indices[0] , GL_STATIC_DRAW);
+
+	// Get a handle for our "LightPosition" uniform
+	glUseProgram(programID);
+	GLuint LightID = glGetUniformLocation(programID, "LightPosition_worldspace");
+	
+	GLuint ColorAddedID = glGetUniformLocation(programID, "MaterialDiffuseColor_Added");
+	
+	// For speed computation
+	double lastTime = glfwGetTime();
+	int nbFrames = 0;
+
+	Environment_s env;
+	env_init(env);
+	std::thread env_proc_thread(env_proc_main, &env);
+	
+	do{
+
+		// Measure speed
+		double currentTime = glfwGetTime();
+		nbFrames++;
+		if ( currentTime - lastTime >= 1.0 ){ // If last prinf() was more than 1sec ago
+			// printf and reset
+			printf("%f ms/frame\n", 1000.0/double(nbFrames));
+			nbFrames = 0;
+			lastTime += 1.0;
+		}
+
+		// Clear the screen
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+		// Use our shader
+		glUseProgram(programID);
+
+		glm::vec3 lightPos = glm::vec3(5, 5, 20);
+		glUniform3f(LightID, lightPos.x, lightPos.y, lightPos.z);
+		
+		glm::mat4 ProjectionMatrix = getProjectionMatrix();
+		glm::mat4 ViewMatrix = getViewMatrix();
+
+		/*****************************************************************************/
+		/******************************** DRAW GROUND ********************************/
+		/*****************************************************************************/
+		
+		glm::mat4 ground_scale_mat;
+		glm::mat4 ground_rotate_mat;
+		glm::mat4 ground_model_mat;
+		glm::mat4 ground_mvp_mat;
+		
+		ground_scale_mat = glm::scale(glm::mat4(1.0f), glm::vec3(20.0f, 20.0f, 20.0f));
+		ground_rotate_mat = glm::rotate(ground_scale_mat, 0.0f, glm::vec3(1, 0, 0));
+		ground_model_mat = ground_rotate_mat; // glm::mat4(1.0);
+		ground_mvp_mat = ProjectionMatrix * ViewMatrix * ground_model_mat;
+		
+		// Send our transformation to the currently bound shader, 
+		// in the "MVP" uniform
+		glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &ground_mvp_mat[0][0]);
+		glUniformMatrix4fv(ModelMatrixID, 1, GL_FALSE, &ground_model_mat[0][0]);
+		glUniformMatrix4fv(ViewMatrixID, 1, GL_FALSE, &ViewMatrix[0][0]);
+		glUniform3f(ColorAddedID, 0.0f, 0.0f, 0.0f);
+		
+		// Bind our texture in Texture Unit 0
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, ground_texture);
+		// Set our "myTextureSampler" sampler to use Texture Unit 0
+		glUniform1i(TextureID, 0);
+
+		// 1rst attribute buffer : vertices
+		glEnableVertexAttribArray(0);
+		glBindBuffer(GL_ARRAY_BUFFER, ground_vert_buf);
+		glVertexAttribPointer(
+			0,                  // attribute. No particular reason for 0, but must match the layout in the shader.
+			3,                  // size
+			GL_FLOAT,           // type
+			GL_FALSE,           // normalized?
+			0,                  // stride
+			(void*)0            // array buffer offset
+		);
+		
+		// 2nd attribute buffer : UVs
+		glEnableVertexAttribArray(1);
+		glBindBuffer(GL_ARRAY_BUFFER, ground_uv_buf);
+		glVertexAttribPointer(
+			1,                                // attribute
+			2,                                // size
+			GL_FLOAT,                         // type
+			GL_FALSE,                         // normalized?
+			0,                                // stride
+			(void*)0                          // array buffer offset
+		);
+		
+		// 3rd attribute buffer : normals
+		glEnableVertexAttribArray(2);
+		glBindBuffer(GL_ARRAY_BUFFER, ground_norm_buf);
+		glVertexAttribPointer(
+			2,                                // attribute
+			3,                                // size
+			GL_FLOAT,                         // type
+			GL_FALSE,                         // normalized?
+			0,                                // stride
+			(void*)0                          // array buffer offset
+		);
+		
+		// Draw the triangle !
+		glDrawArrays(GL_TRIANGLES, 0, 6*3); // 6*3 indices starting at 0 -> 6 triangles
+		
+		/*****************************************************************************/
+		/********************************* DRAW OBJS *********************************/
+		/*****************************************************************************/
+		
+		// Bind our texture in Texture Unit 0
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, Texture);
+		// Set our "myTextureSampler" sampler to use Texture Unit 0
+		glUniform1i(TextureID, 1);
+		
+		// 1rst attribute buffer : vertices
+		glEnableVertexAttribArray(0);
+		glBindBuffer(GL_ARRAY_BUFFER, tank_vect_buf);
+		glVertexAttribPointer(
+			0,                  // attribute
+			3,                  // size
+			GL_FLOAT,           // type
+			GL_FALSE,           // normalized?
+			0,                  // stride
+			(void*)0            // array buffer offset
+		);
+
+		// 2nd attribute buffer : UVs
+		glEnableVertexAttribArray(1);
+		glBindBuffer(GL_ARRAY_BUFFER, tank_uv_buf);
+		glVertexAttribPointer(
+			1,                                // attribute
+			2,                                // size
+			GL_FLOAT,                         // type
+			GL_FALSE,                         // normalized?
+			0,                                // stride
+			(void*)0                          // array buffer offset
+		);
+
+		// 3rd attribute buffer : normals
+		glEnableVertexAttribArray(2);
+		glBindBuffer(GL_ARRAY_BUFFER, tank_norm_buf);
+		glVertexAttribPointer(
+			2,                                // attribute
+			3,                                // size
+			GL_FLOAT,                         // type
+			GL_FALSE,                         // normalized?
+			0,                                // stride
+			(void*)0                          // array buffer offset
+		);
+		
+		// Index buffer
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, tank_elem_buf);
+		
+		for (int obst_idx = 0; obst_idx < env.obst_vec.size(); obst_idx ++)
+		{
+			Obst const & obst = env.obst_vec[obst_idx];
+			if (obst.get_is_activated() == false) {
+				continue;
+			}
+			glm::mat4 obst_model_mat = obst.get_model_matrix(); //glm::mat4(1.0);
+			glm::mat4 obst_mvp_mat = ProjectionMatrix * ViewMatrix * obst_model_mat;
+			
+			// Send our transformation to the currently bound shader, 
+			// in the "MVP" uniform
+			glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &obst_mvp_mat[0][0]);
+			glUniformMatrix4fv(ModelMatrixID, 1, GL_FALSE, &obst_model_mat[0][0]);
+			glUniformMatrix4fv(ViewMatrixID, 1, GL_FALSE, &ViewMatrix[0][0]);
+			glUniform3f(ColorAddedID, 0.0f, 0.0f, 0.0f);
+			if (obst.get_is_hit()) {
+				glUniform3f(ColorAddedID, 255.0f, 0.0f, 0.0f);
+			}
+			
+			// Draw the triangles !
+			glDrawElements(
+				GL_TRIANGLES,      // mode
+				indices.size(),    // count
+				GL_UNSIGNED_SHORT,   // type
+				(void*)0           // element array buffer offset
+			);
+		}
+		
+		for (int tank_idx = 0; tank_idx < env.tank_vec.size(); tank_idx ++)
+		{
+			Tank const & tank = env.tank_vec[tank_idx];
+			
+			glm::mat4 tank_model_mat = tank.get_model_matrix(); //glm::mat4(1.0);
+			glm::mat4 tank_mvp_mat = ProjectionMatrix * ViewMatrix * tank_model_mat;
+			
+			// Send our transformation to the currently bound shader, 
+			// in the "MVP" uniform
+			glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &tank_mvp_mat[0][0]);
+			glUniformMatrix4fv(ModelMatrixID, 1, GL_FALSE, &tank_model_mat[0][0]);
+			glUniformMatrix4fv(ViewMatrixID, 1, GL_FALSE, &ViewMatrix[0][0]);
+			glUniform3f(ColorAddedID, 0.0f, 0.0f, 0.0f);
+			if (tank.get_is_hit()){
+				glUniform3f(ColorAddedID, 255.0f, 0.0f, 0.0f);
+			}
+
+			
+			// Draw the triangles !
+			glDrawElements(
+				GL_TRIANGLES,      // mode
+				indices.size(),    // count
+				GL_UNSIGNED_SHORT,   // type
+				(void*)0           // element array buffer offset
+			);
+		}
+		
+		for (int ammo_idx = 0; ammo_idx < env.ammo_vec.size(); ammo_idx ++)
+		{
+			Ammo const & ammo = env.ammo_vec[ammo_idx];
+			if (ammo.get_is_fired() == false) {
+				continue;
+			}
+			
+			glm::mat4 ammo_model_mat = env.ammo_vec[ammo_idx].get_model_matrix(); //glm::mat4(1.0);
+			glm::mat4 ammo_mvp_mat = ProjectionMatrix * ViewMatrix * ammo_model_mat;
+			
+			// Send our transformation to the currently bound shader, 
+			// in the "MVP" uniform
+			glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &ammo_mvp_mat[0][0]);
+			glUniformMatrix4fv(ModelMatrixID, 1, GL_FALSE, &ammo_model_mat[0][0]);
+			glUniformMatrix4fv(ViewMatrixID, 1, GL_FALSE, &ViewMatrix[0][0]);
+			glUniform3f(ColorAddedID, 0.0f, 0.0f, 0.0f);
+			
+			// Draw the triangles !
+			glDrawElements(
+				GL_TRIANGLES,      // mode
+				indices.size(),    // count
+				GL_UNSIGNED_SHORT,   // type
+				(void*)0           // element array buffer offset
+			);
+		}
+		
+		for (int rain_idx = 0; rain_idx < env.rain_vec.size(); rain_idx ++)
+		{
+			Ammo const & rain = env.rain_vec[rain_idx];
+			
+			if (rain.get_is_fired() == false) {
+				continue;
+			}
+			
+			glm::mat4 rain_model_mat = env.rain_vec[rain_idx].get_model_matrix(); //glm::mat4(1.0);
+			glm::mat4 rain_mvp_mat = ProjectionMatrix * ViewMatrix * rain_model_mat;
+			
+			// Send our transformation to the currently bound shader, 
+			// in the "MVP" uniform
+			glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &rain_mvp_mat[0][0]);
+			glUniformMatrix4fv(ModelMatrixID, 1, GL_FALSE, &rain_model_mat[0][0]);
+			glUniformMatrix4fv(ViewMatrixID, 1, GL_FALSE, &ViewMatrix[0][0]);
+			glUniform3f(ColorAddedID, 0.0f, 0.0f, 0.0f);
+			
+			// Draw the triangles !
+			glDrawElements(
+				GL_TRIANGLES,      // mode
+				indices.size(),    // count
+				GL_UNSIGNED_SHORT,   // type
+				(void*)0           // element array buffer offset
+			);
+		}
+		
+		glDisableVertexAttribArray(0);
+		glDisableVertexAttribArray(1);
+		glDisableVertexAttribArray(2);
+
+		// Swap buffers
+		glfwSwapBuffers(window);
+		glfwPollEvents();
+		
+	} // Check if the ESC key was pressed or the window was closed
+	while( glfwGetKey(window, GLFW_KEY_ESCAPE ) != GLFW_PRESS &&
+		   glfwWindowShouldClose(window) == 0 );
+
+	
+	
+	// Cleanup VBO and shader
+	glDeleteBuffers(1, &ground_vert_buf);
+	glDeleteBuffers(1, &ground_uv_buf);
+	glDeleteBuffers(1, &ground_norm_buf);
+	
+	glDeleteBuffers(1, &tank_vect_buf);
+	glDeleteBuffers(1, &tank_uv_buf);
+	glDeleteBuffers(1, &tank_norm_buf);
+	glDeleteBuffers(1, &tank_elem_buf);
+	glDeleteProgram(programID);
+	glDeleteTextures(1, &Texture);
+	glDeleteVertexArrays(1, &VertexArrayID);
+
+	// Close OpenGL window and terminate GLFW
+	glfwTerminate();
+	
+	env.is_terminated = 1;
+	env_proc_thread.join();
+	
+	return 0;
+}
+
