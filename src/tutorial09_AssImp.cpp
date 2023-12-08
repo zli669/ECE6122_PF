@@ -1,7 +1,7 @@
 /*
 Map Feature:
 - bounded
-- changable (in-progress)
+- changable (todo)
 
 Obstable Features:
 - path blocking for ammo and tank
@@ -9,17 +9,20 @@ Obstable Features:
 
 Rain Feature:
 - random fall
+- shadow (todo)
 
 Ammo Feature:
-- hit effect of red light indication
+- hit indication effect
 - hit push effect on tank
 
 Tank Feature:
-- hit effect on other tank
+- collision push effect on other tank
+- fire cooldown
 
 View Features:
 - rotatable scene
 - zoomable scene
+- multiple light (todo)
 
 */
 
@@ -446,36 +449,11 @@ static void get_tank_act_from_user_idx(TankAction_s & tank_act, int user_idx)
 
 typedef struct Environment_s {
     int is_terminated;
-
     std::vector<Obst> obst_vec;
     std::vector<Ammo> ammo_vec;
     std::vector<Ammo> rain_vec;
     std::vector<Tank> tank_vec;
 } Environment_s;
-
-static void env_init(Environment_s & env) {
-    env.is_terminated = 0;
-
-    srand(0);
-
-    for (int obst_idx = 0; obst_idx < 20; obst_idx ++) {
-        float x = BOUND_X_MIN + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (BOUND_X_MAX - BOUND_X_MIN)));
-        float y = BOUND_Y_MIN + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (BOUND_Y_MAX - BOUND_Y_MIN)));
-        float z = 0.0f;
-        float r = 1.0f;
-
-        Obst obstacle(x, y, z, r);
-        env.obst_vec.push_back(obstacle);
-    }
-
-    for (int rain_idx = 0; rain_idx < 20; rain_idx ++) {
-        Ammo rain;
-        env.rain_vec.push_back(rain);
-    }
-
-    env.tank_vec.push_back(Tank(-5.0f, -5.0f, 0.0f, 1.0f));
-    env.tank_vec.push_back(Tank(5.0f, 5.0f, 0.0f, 1.0f));
-}
 
 static bool tank_move_and_check(Tank & tank, float angle_xy, float angle_z, float dist, Environment_s & env, int itr_cnt) {
     if (itr_cnt > 10) {
@@ -483,7 +461,6 @@ static bool tank_move_and_check(Tank & tank, float angle_xy, float angle_z, floa
     }
 
     tank.move(angle_xy, angle_z, dist);
-
     if (tank.check_is_out_of_bound()) {
         tank.move(angle_xy, angle_z, -dist);
         return false;
@@ -495,7 +472,6 @@ static bool tank_move_and_check(Tank & tank, float angle_xy, float angle_z, floa
             tank.move(angle_xy, angle_z, -dist);
             return false;
         }
-
     }
 
     for (int tank_idx = 0; tank_idx < env.tank_vec.size(); tank_idx ++) {
@@ -561,7 +537,33 @@ static bool ammo_move_and_check(Ammo & ammo, float angle_xy, float angle_z, floa
     return true;
 }
 
-static void env_refresh(Environment_s & env, float time) {
+static bool env_init(Environment_s & env) {
+    env.is_terminated = 0;
+
+    srand(0);
+
+    for (int obst_idx = 0; obst_idx < 20; obst_idx ++) {
+        float x = BOUND_X_MIN + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (BOUND_X_MAX - BOUND_X_MIN)));
+        float y = BOUND_Y_MIN + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (BOUND_Y_MAX - BOUND_Y_MIN)));
+        float z = 0.0f;
+        float r = 1.0f;
+
+        Obst obstacle(x, y, z, r);
+        env.obst_vec.push_back(obstacle);
+    }
+
+    for (int rain_idx = 0; rain_idx < 20; rain_idx ++) {
+        Ammo rain;
+        env.rain_vec.push_back(rain);
+    }
+
+    env.tank_vec.push_back(Tank(-5.0f, -5.0f, 0.0f, 1.0f));
+    env.tank_vec.push_back(Tank(5.0f, 5.0f, 0.0f, 1.0f));
+
+    return true;
+}
+
+static bool env_refresh(Environment_s & env, float time) {
     for (int obst_idx = 0; obst_idx < env.obst_vec.size(); obst_idx ++) {
         Obst & obst = env.obst_vec[obst_idx];
         if (obst.get_is_activated()) {
@@ -575,6 +577,8 @@ static void env_refresh(Environment_s & env, float time) {
             tank.refreash(time);
         }
     }
+
+    return true;
 }
 
 
