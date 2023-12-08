@@ -268,10 +268,6 @@ class Ammo : public Sphere {
         return true;
     }
 
-    bool advance(float time) {
-        return this->move(this->angle_xy, this->angle_z, this->move_speed * time);
-    }
-
     bool refreash(float time) {
         // do nothing
         return true;
@@ -352,28 +348,24 @@ class Tank : public Sphere {
         return true;
     }
 
-    bool advance(float time) {
-        this->move(this->angle_xy, this->angle_z, this->move_speed * time);
-        return true;
-    }
-
     Ammo fire() {
         Ammo ammo;
-        if (this->timer_is_cooling_fire > 0.0f || this->num_ammo <= 0) {
+        if (this->get_is_alive() == false || this->timer_is_cooling_fire > 0.0f || this->num_ammo <= 0) {
             // ammo.is_fired() == false;
         }
         else {
             this->timer_is_cooling_fire = TANK_DEFAULT_TIMER_IS_COOLING_FIRE;
             this->num_ammo --;
-            float ammo_r = this->r / 4.0f;
-            float ammo_move_speed = this->move_speed * 5.0f;
-            ammo = Ammo(this->x, this->y, this->z, ammo_r, this->angle_xy, this->angle_z, ammo_move_speed);
-            ammo.advance((this->r + ammo_r) / ammo_move_speed);
+            ammo = Ammo(this->x, this->y, this->z, this->r / 4.0f, this->angle_xy, this->angle_z, this->move_speed * 5.0f);
+            ammo.move(ammo.get_angle_xy(), ammo.get_angle_z(), this->r + ammo.get_r());
         }
         return ammo;
     }
 
     bool refreash(float time) {
+        if (this->get_is_alive() == false) {
+            return false;
+        }
         if (this->timer_is_hit > 0.0f) {
             this->timer_is_hit -= time;
         }
@@ -483,13 +475,14 @@ static bool tank_move_and_check(Tank & tank, float angle_xy, float angle_z, floa
     if (itr_cnt > 10) {
         return false;
     }
-
+    if (tank.get_is_alive() == false) {
+        return false;
+    }
     tank.move(angle_xy, angle_z, dist);
     if (tank.check_is_out_of_bound()) {
         tank.move(angle_xy, angle_z, -dist);
         return false;
     }
-
     for (int obst_idx = 0; obst_idx < env.obst_vec.size(); obst_idx ++) {
         Obst const & obst = env.obst_vec[obst_idx];
         if (obst.get_is_activated() && Sphere::check_is_collided(tank, obst)) {
@@ -497,7 +490,6 @@ static bool tank_move_and_check(Tank & tank, float angle_xy, float angle_z, floa
             return false;
         }
     }
-
     for (int tank_idx = 0; tank_idx < env.tank_vec.size(); tank_idx ++) {
         Tank & tank_collided = env.tank_vec[tank_idx];
         if (tank_collided.get_is_alive() && Sphere::check_is_collided(tank, tank_collided)) {
@@ -506,7 +498,6 @@ static bool tank_move_and_check(Tank & tank, float angle_xy, float angle_z, floa
             float dist_collided = 0.0f;
             Sphere::get_relation(tank, tank_collided, angle_xy_collided, angle_z_collided, dist_collided);
             dist_collided = tank.get_r() + tank_collided.get_r() - dist_collided;
-
             if (tank_move_and_check(tank_collided, angle_xy_collided, angle_z_collided, dist_collided, env, itr_cnt + 1)) {
                 break;
             }
@@ -516,7 +507,6 @@ static bool tank_move_and_check(Tank & tank, float angle_xy, float angle_z, floa
             }
         }
     }
-
     return true;
 }
 
@@ -524,14 +514,11 @@ static bool ammo_move_and_check(Ammo & ammo, float angle_xy, float angle_z, floa
     if (ammo.get_is_fired() == false) {
         return false;
     }
-
     ammo.move(angle_xy, angle_z, dist);
-
     if (ammo.check_is_out_of_bound()) {
         ammo.set_is_fired(false);
         return false;
     }
-
     for (int obst_idx = 0; obst_idx < env.obst_vec.size(); obst_idx ++) {
         Obst & obst = env.obst_vec[obst_idx];
         if (obst.get_is_activated() && Sphere::check_is_collided(ammo, obst)) {
@@ -540,7 +527,6 @@ static bool ammo_move_and_check(Ammo & ammo, float angle_xy, float angle_z, floa
             return false;
         }
     }
-
     for (int tank_idx = 0; tank_idx < env.tank_vec.size(); tank_idx ++) {
         Tank & tank_collided = env.tank_vec[tank_idx];
         if (tank_collided.get_is_alive() && Sphere::check_is_collided(ammo, tank_collided)) {
@@ -549,10 +535,8 @@ static bool ammo_move_and_check(Ammo & ammo, float angle_xy, float angle_z, floa
             float dist_collided = 0.0f;
             Sphere::get_relation(ammo, tank_collided, angle_xy_collided, angle_z_collided, dist_collided);
             dist_collided = ammo.get_r() + tank_collided.get_r() - dist_collided;
-
             tank_collided.set_is_hit(true);
             tank_move_and_check(tank_collided, angle_xy_collided, angle_z_collided, dist_collided * 5.0f, env, 0);
-
             ammo.set_is_fired(false);
             return false;
         }
@@ -645,8 +629,7 @@ static void env_proc_main(Environment_s * p_arg) {
 
         for (int rain_idx = 0; rain_idx < p_arg->rain_vec.size(); rain_idx ++) {
             Ammo & rain = p_arg->rain_vec[rain_idx];
-            rain.advance(1.0f * delta_time);
-
+            rain.move(rain.get_angle_xy(), rain.get_angle_z(), rain.get_move_speed() * delta_time);
             if (rain.check_is_out_of_bound()) {
                 rain.set_is_fired(false);
             }
