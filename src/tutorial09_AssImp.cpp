@@ -19,7 +19,7 @@ Tank Feature:
 - collision push effect on other tank
 - fire cooldown
 - ammo quantity control
-- death control (todo)
+- death control
 
 View Features:
 - rotatable scene
@@ -500,7 +500,7 @@ static bool tank_move_and_check(Tank & tank, float angle_xy, float angle_z, floa
 
     for (int tank_idx = 0; tank_idx < env.tank_vec.size(); tank_idx ++) {
         Tank & tank_collided = env.tank_vec[tank_idx];
-        if (Sphere::check_is_collided(tank, tank_collided)) {
+        if (tank_collided.get_is_alive() && Sphere::check_is_collided(tank, tank_collided)) {
             float angle_xy_collided = 0.0f;
             float angle_z_collided = 0.0f;
             float dist_collided = 0.0f;
@@ -543,7 +543,7 @@ static bool ammo_move_and_check(Ammo & ammo, float angle_xy, float angle_z, floa
 
     for (int tank_idx = 0; tank_idx < env.tank_vec.size(); tank_idx ++) {
         Tank & tank_collided = env.tank_vec[tank_idx];
-        if (Sphere::check_is_collided(ammo, tank_collided)) {
+        if (tank_collided.get_is_alive() && Sphere::check_is_collided(ammo, tank_collided)) {
             float angle_xy_collided = 0.0f;
             float angle_z_collided = 0.0f;
             float dist_collided = 0.0f;
@@ -665,7 +665,7 @@ static void env_proc_main(Environment_s * p_arg) {
             if (rain.get_is_fired()) {
                 for (int tank_idx = 0; tank_idx < p_arg->tank_vec.size(); tank_idx ++) {
                     Tank & tank = p_arg->tank_vec[tank_idx];
-                    if (Sphere::check_is_collided(rain, tank)) {
+                    if (tank.get_is_alive() && Sphere::check_is_collided(rain, tank)) {
                         tank.set_is_hit(true);
 
                         rain.set_is_fired(false);
@@ -1002,6 +1002,9 @@ int main( void ) {
         for (int tank_idx = 0; tank_idx < env.tank_vec.size(); tank_idx ++)
         {
             Tank const & tank = env.tank_vec[tank_idx];
+            if (tank.get_is_alive() == false) {
+                continue;
+            }
 
             glm::mat4 tank_model_mat = tank.get_model_matrix(); //glm::mat4(1.0);
             glm::mat4 tank_mvp_mat = ProjectionMatrix * ViewMatrix * tank_model_mat;
@@ -1015,7 +1018,6 @@ int main( void ) {
             if (tank.get_is_hit()){
                 glUniform3f(ColorAddedID, 255.0f, 0.0f, 0.0f);
             }
-
 
             // Draw the triangles !
             glDrawElements(
@@ -1055,7 +1057,6 @@ int main( void ) {
         for (int rain_idx = 0; rain_idx < env.rain_vec.size(); rain_idx ++)
         {
             Ammo const & rain = env.rain_vec[rain_idx];
-
             if (rain.get_is_fired() == false) {
                 continue;
             }
