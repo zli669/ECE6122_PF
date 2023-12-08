@@ -534,9 +534,8 @@ static bool ammo_move_and_check(Ammo & ammo, float angle_xy, float angle_z, floa
             float angle_z_collided = 0.0f;
             float dist_collided = 0.0f;
             Sphere::get_relation(ammo, tank_collided, angle_xy_collided, angle_z_collided, dist_collided);
-            dist_collided = ammo.get_r() + tank_collided.get_r() - dist_collided;
             tank_collided.set_is_hit(true);
-            tank_move_and_check(tank_collided, angle_xy_collided, angle_z_collided, dist_collided * 5.0f, env, 0);
+            tank_move_and_check(tank_collided, angle_xy_collided, angle_z_collided, ammo.get_r(), env, 0);
             ammo.set_is_fired(false);
             return false;
         }
