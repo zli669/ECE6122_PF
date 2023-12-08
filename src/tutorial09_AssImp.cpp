@@ -18,6 +18,8 @@ Ammo Feature:
 Tank Feature:
 - collision push effect on other tank
 - fire cooldown
+- ammo quantity control
+- death control (todo)
 
 View Features:
 - rotatable scene
@@ -189,11 +191,14 @@ class Sphere {
 };
 
 class Obst : public Sphere {
-    float timer_is_hit;
+    #define OBST_DEFAULT_HEALTH                 (10.0f)
+    #define OBST_DEFAULT_TIMER_IS_HIT           (0.1f)
+
     float health;
+    float timer_is_hit;
 
     public:
-    Obst(float x, float y, float z, float r) : Sphere(x, y, z, r), health{100.0f}, timer_is_hit{0.0f} {}
+    Obst(float x, float y, float z, float r) : Sphere(x, y, z, r), health{OBST_DEFAULT_HEALTH}, timer_is_hit{0.0f} {}
 
     bool get_is_activated() const {
         return this->health > 0.0f;
@@ -201,7 +206,7 @@ class Obst : public Sphere {
 
     bool set_is_activated(bool is_activated) {
         if (is_activated) {
-            this->health = 100.0f;
+            this->health = OBST_DEFAULT_HEALTH;
         }
         else {
             this->health = 0.0f;
@@ -215,7 +220,7 @@ class Obst : public Sphere {
 
     bool set_is_hit(bool is_hit) {
         if (is_hit) {
-            this->timer_is_hit = 0.1f;
+            this->timer_is_hit = OBST_DEFAULT_TIMER_IS_HIT;
             this->health -= 1.0f;
         }
         else {
@@ -274,11 +279,20 @@ class Ammo : public Sphere {
 };
 
 class Tank : public Sphere {
+    #define TANK_DEFAULT_HEALTH                 (10.0f)
+    #define TANK_DEFAULT_TURN_SPEED             (MY_PI_HALF / 3.0f)
+    #define TANK_DEFAULT_MOVE_SPEED             (4.5f)
+    #define TANK_DEFAULT_MAX_NUM_AMMO           (12)
+    #define TANK_DEFAULT_TIMER_IS_HIT           (0.1f)
+    #define TANK_DEFAULT_TIMER_IS_COOLING_FIRE  (0.1f)
+    #define TANK_DEFAULT_TIMER_IS_LOADING_AMMO  (0.8f)
+
     float health;
     float timer_is_hit;
-    float timer_is_in_fire_cd;
+    float timer_is_cooling_fire;
+    float timer_is_loading_ammo;
 
-    int max_num_ammo;
+    int MAX_NUM_AMMO;
     int num_ammo;
     float move_speed;
     float angle_xy;
@@ -286,7 +300,7 @@ class Tank : public Sphere {
     float turn_speed;
 
     public:
-    Tank(float x, float y, float z, float r) : Sphere(x, y, z, r), angle_xy{0.0f}, angle_z{0.0f}, turn_speed{MY_PI_HALF / 6.0f}, move_speed{3.0f}, max_num_ammo{30}, num_ammo{20}, health{100.0f}, timer_is_hit{0.0f}, timer_is_in_fire_cd{0.0f} { }
+    Tank(float x, float y, float z, float r) : Sphere(x, y, z, r), angle_xy{0.0f}, angle_z{0.0f}, turn_speed{TANK_DEFAULT_TURN_SPEED}, move_speed{TANK_DEFAULT_MOVE_SPEED}, MAX_NUM_AMMO{TANK_DEFAULT_MAX_NUM_AMMO}, num_ammo{TANK_DEFAULT_MAX_NUM_AMMO}, health{TANK_DEFAULT_HEALTH}, timer_is_hit{0.0f}, timer_is_cooling_fire{0.0f}, timer_is_loading_ammo{0.0f} { }
 
     float get_angle_xy() const {
         return this->angle_xy;
@@ -310,7 +324,7 @@ class Tank : public Sphere {
 
     bool set_is_alive(bool is_alive) {
         if (is_alive) {
-            this->health = 100.0f;
+            this->health = TANK_DEFAULT_HEALTH;
         }
         else {
             this->health = 0.0f;
@@ -324,7 +338,7 @@ class Tank : public Sphere {
 
     bool set_is_hit(bool is_hit) {
         if (is_hit) {
-            this->timer_is_hit = 0.1f;
+            this->timer_is_hit = TANK_DEFAULT_TIMER_IS_HIT;
             this->health -= 1.0f;
         }
         else {
@@ -345,11 +359,12 @@ class Tank : public Sphere {
 
     Ammo fire() {
         Ammo ammo;
-        if (this->timer_is_in_fire_cd > 0.0f) {
+        if (this->timer_is_cooling_fire > 0.0f || this->num_ammo <= 0) {
             // ammo.is_fired() == false;
         }
         else {
-            this->timer_is_in_fire_cd = 0.5f;
+            this->timer_is_cooling_fire = TANK_DEFAULT_TIMER_IS_COOLING_FIRE;
+            this->num_ammo --;
             float ammo_r = this->r / 4.0f;
             float ammo_move_speed = this->move_speed * 5.0f;
             ammo = Ammo(this->x, this->y, this->z, ammo_r, this->angle_xy, this->angle_z, ammo_move_speed);
@@ -362,8 +377,17 @@ class Tank : public Sphere {
         if (this->timer_is_hit > 0.0f) {
             this->timer_is_hit -= time;
         }
-        if (this->timer_is_in_fire_cd > 0.0f) {
-            this->timer_is_in_fire_cd -= time;
+        if (this->timer_is_cooling_fire > 0.0f) {
+            this->timer_is_cooling_fire -= time;
+        }
+        if (this->timer_is_loading_ammo > 0.0f) {
+            this->timer_is_loading_ammo -= time;
+        }
+        else {
+            if (this->num_ammo < this->MAX_NUM_AMMO) {
+                this->num_ammo ++;
+                this->timer_is_loading_ammo = TANK_DEFAULT_TIMER_IS_LOADING_AMMO;
+            }
         }
         return true;
     }
