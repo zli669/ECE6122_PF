@@ -299,6 +299,7 @@ class Ammo : public Sphere {
         glm::mat4 scale_mat = glm::scale(glm::mat4(1.0f), glm::vec3(this->r * AMMO_R_TO_SIZE_RATIO, this->r * AMMO_R_TO_SIZE_RATIO, this->r * AMMO_R_TO_SIZE_RATIO));
         glm::mat4 trans_mat = glm::translate(glm::mat4(), glm::vec3(this->x, this->y, this->z));
         glm::mat4 rotat_mat = glm::rotate( glm::mat4(1.0f), this->angle_xy + AMMO_ROTATE_OFFS_ANGLE_XY, glm::vec3(0, 0, 1) );
+        rotat_mat = glm::rotate( rotat_mat, this->angle_z, glm::vec3(0, 1, 0) );
         glm::mat4 model_mat = trans_mat * rotat_mat * scale_mat;
 
         return model_mat;
@@ -590,7 +591,40 @@ static bool ammo_move_and_check(Ammo & ammo, float angle_xy, float angle_z, floa
             return false;
         }
     }
+    return true;
+}
 
+static bool rain_move_and_check(Ammo & rain, float angle_xy, float angle_z, float dist, Environment_s & env) {
+    if (rain.get_is_fired() == false) {
+        return false;
+    }
+    rain.move(angle_xy, angle_z, dist);
+    if (rain.check_is_out_of_bound()) {
+        rain.set_is_fired(false);
+        return false;
+    }
+    if (rain.get_is_fired()) {
+        for (int obst_idx = 0; obst_idx < env.obst_vec.size(); obst_idx ++) {
+            Obst & obst = env.obst_vec[obst_idx];
+            if (obst.get_is_activated() && Sphere::check_is_collided(rain, obst)) {
+                obst.set_is_hit(true);
+                obst.reduce_health(1.0f);
+                rain.set_is_fired(false);
+                return false;
+            }
+        }
+    }
+    if (rain.get_is_fired()) {
+        for (int tank_idx = 0; tank_idx < env.tank_vec.size(); tank_idx ++) {
+            Tank & tank = env.tank_vec[tank_idx];
+            if (tank.get_is_alive() && Sphere::check_is_collided(rain, tank)) {
+                tank.set_is_hit(true);
+                tank.reduce_health(1.0f);
+                rain.set_is_fired(false);
+                return false;
+            }
+        }
+    }
     return true;
 }
 
@@ -609,7 +643,7 @@ static bool env_init(Environment_s & env) {
         env.obst_vec.push_back(obstacle);
     }
 
-    for (int rain_idx = 0; rain_idx < 0; rain_idx ++) {
+    for (int rain_idx = 0; rain_idx < 20; rain_idx ++) {
         Ammo rain;
         env.rain_vec.push_back(rain);
     }
@@ -678,33 +712,7 @@ static void env_proc_main(Environment_s * p_arg) {
 
         for (int rain_idx = 0; rain_idx < p_arg->rain_vec.size(); rain_idx ++) {
             Ammo & rain = p_arg->rain_vec[rain_idx];
-            rain.move(rain.get_angle_xy(), rain.get_angle_z(), rain.get_move_speed() * delta_time);
-            if (rain.check_is_out_of_bound()) {
-                rain.set_is_fired(false);
-            }
-
-            if (rain.get_is_fired()) {
-                for (int obst_idx = 0; obst_idx < p_arg->obst_vec.size(); obst_idx ++) {
-                    Obst & obst = p_arg->obst_vec[obst_idx];
-                    if (obst.get_is_activated() && Sphere::check_is_collided(rain, obst)) {
-                        obst.set_is_hit(true);
-                        obst.reduce_health(1.0f);
-                        rain.set_is_fired(false);
-                    }
-                }
-            }
-
-            if (rain.get_is_fired()) {
-                for (int tank_idx = 0; tank_idx < p_arg->tank_vec.size(); tank_idx ++) {
-                    Tank & tank = p_arg->tank_vec[tank_idx];
-                    if (tank.get_is_alive() && Sphere::check_is_collided(rain, tank)) {
-                        tank.set_is_hit(true);
-                        tank.reduce_health(1.0f);
-                        rain.set_is_fired(false);
-                    }
-                }
-            }
-
+            rain_move_and_check(rain, rain.get_angle_xy(), rain.get_angle_z(), rain.get_move_speed() * delta_time, env);
             if (rain.get_is_fired() == false) {
                 rain = Ammo(
                 BOUND_X_MIN + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (BOUND_X_MAX - BOUND_X_MIN))),
