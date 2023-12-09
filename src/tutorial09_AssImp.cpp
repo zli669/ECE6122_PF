@@ -104,21 +104,21 @@ class Sphere {
     Sphere(float x, float y, float z, float r) : x{x}, y{y}, z{z}, r{r} {}
 
     static bool get_relation(Sphere const & a, Sphere const & b, float & angle_xy, float & angle_z, float & dist) {
+        if (&a == &b) {
+            angle_xy = 0.0f;
+            angle_z = 0.0f;
+            dist = 0.0f;
+            return false;
+        }
         float x_diff = b.x - a.x;
         float y_diff = b.y - a.y;
         float z_diff = b.z - a.z;
-
-        float xy_diff_sq = x_diff * x_diff + y_diff * y_diff;
+        float x_diff_sq = x_diff * x_diff;
+        float y_diff_sq = y_diff * y_diff;
         float z_diff_sq = z_diff * z_diff;
-
         angle_xy = atan2(y_diff, x_diff);
-        angle_z = atan2(z_diff_sq, xy_diff_sq);
-        dist = sqrt(xy_diff_sq + z_diff_sq);
-
-        if (&a == &b) {
-            return false;
-        }
-
+        angle_z = atan2(z_diff_sq, x_diff_sq + y_diff_sq);
+        dist = sqrt(x_diff_sq + y_diff_sq + z_diff_sq);
         return true;
     }
 
@@ -130,17 +130,16 @@ class Sphere {
         return check_is_out_of_bound(a, BOUND_X_MIN, BOUND_X_MAX, BOUND_Y_MIN, BOUND_Y_MAX, BOUND_Z_MIN, BOUND_Z_MAX);
     }
 
+    #define SPHERE_COLLISION_CHECK_TOLERANCE    (0.00001f)
     static bool check_is_collided(Sphere const & a, Sphere const & b) {
         if (&a == &b) {
             return false;
         }
-
         float x_diff = a.x - b.x;
         float y_diff = a.y - b.y;
         float z_diff = a.z - b.z;
         float r_sum = a.r + b.r;
-
-        return (x_diff * x_diff + y_diff * y_diff + z_diff * z_diff) < (r_sum * r_sum);
+        return (x_diff * x_diff + y_diff * y_diff + z_diff * z_diff) + SPHERE_COLLISION_CHECK_TOLERANCE < (r_sum * r_sum);
     }
 
     float get_x() const {
@@ -176,10 +175,12 @@ class Sphere {
     }
 
     bool move(float angle_xy, float angle_z, float dist) {
-        this->x += dist * cos(angle_z) * cos(angle_xy);
-        this->y += dist * cos(angle_z) * sin(angle_xy);
-        this->z += dist * sin(angle_z);
-
+        float x_diff = dist * cos(angle_z) * cos(angle_xy);
+        float y_diff = dist * cos(angle_z) * sin(angle_xy);
+        float z_diff = dist * sin(angle_z);
+        this->x += x_diff;
+        this->y += y_diff;
+        this->z += z_diff;
         return true;
     }
 
@@ -188,7 +189,6 @@ class Sphere {
         glm::mat4 trans_mat = glm::translate(glm::mat4(), glm::vec3(this->x, this->y, this->z));
         glm::mat4 rotat_mat = glm::rotate( glm::mat4(1.0f), 0.0f, glm::vec3(0, 0, 1) );
         glm::mat4 model_mat = trans_mat * rotat_mat * scale_mat;
-
         return model_mat;
     }
 };
@@ -224,12 +224,21 @@ class Obst : public Sphere {
     bool set_is_hit(bool is_hit) {
         if (is_hit) {
             this->timer_is_hit = OBST_DEFAULT_TIMER_IS_HIT;
-            this->health -= 1.0f;
         }
         else {
             this->timer_is_hit = 0.0f;
         }
         return true;
+    }
+
+    bool reduce_health(float amount) {
+        if (this->health > 0.0f) {
+            this->health -= amount;
+            return true;
+        }
+        else {
+            return false;
+        }
     }
 
     bool refreash(float time) {
@@ -239,14 +248,11 @@ class Obst : public Sphere {
         return true;
     }
 
-    #define OBST_TRANSLATE_OFFS_Y                   (0.7f)
-
     glm::mat4 get_model_matrix() const {
         glm::mat4 scale_mat = glm::scale(glm::mat4(1.0f), glm::vec3(this->r, this->r, this->r));
-        glm::mat4 trans_mat = glm::translate(glm::mat4(), glm::vec3(this->x, this->y, this->z + OBST_TRANSLATE_OFFS_Y));
+        glm::mat4 trans_mat = glm::translate(glm::mat4(), glm::vec3(this->x, this->y, this->z));
         glm::mat4 rotat_mat = glm::rotate( glm::mat4(1.0f), 0.0f, glm::vec3(0, 0, 1) );
         glm::mat4 model_mat = trans_mat * rotat_mat * scale_mat;
-
         return model_mat;
     }
 };
@@ -286,18 +292,27 @@ class Ammo : public Sphere {
         // do nothing
         return true;
     }
+
+    #define AMMO_R_TO_SIZE_RATIO            (3.0f)
+    #define AMMO_ROTATE_OFFS_ANGLE_XY       (MY_PI_HALF * 2.0f)
+    glm::mat4 get_model_matrix() const {
+        glm::mat4 scale_mat = glm::scale(glm::mat4(1.0f), glm::vec3(this->r * AMMO_R_TO_SIZE_RATIO, this->r * AMMO_R_TO_SIZE_RATIO, this->r * AMMO_R_TO_SIZE_RATIO));
+        glm::mat4 trans_mat = glm::translate(glm::mat4(), glm::vec3(this->x, this->y, this->z));
+        glm::mat4 rotat_mat = glm::rotate( glm::mat4(1.0f), this->angle_xy + AMMO_ROTATE_OFFS_ANGLE_XY, glm::vec3(0, 0, 1) );
+        glm::mat4 model_mat = trans_mat * rotat_mat * scale_mat;
+
+        return model_mat;
+    }
 };
 
 class Tank : public Sphere {
-    #define TANK_DEFAULT_HEALTH                 (10.0f)
-    #define TANK_DEFAULT_TURN_SPEED             (MY_PI_HALF / 3.0f)
-    #define TANK_DEFAULT_MOVE_SPEED             (4.5f)
+    #define TANK_DEFAULT_HEALTH                 (20.0f)
+    #define TANK_DEFAULT_TURN_SPEED             (MY_PI_HALF / 2.0f)
+    #define TANK_DEFAULT_MOVE_SPEED             (5.0f)
     #define TANK_DEFAULT_MAX_NUM_AMMO           (12)
     #define TANK_DEFAULT_TIMER_IS_HIT           (0.1f)
-    #define TANK_DEFAULT_TIMER_IS_COOLING_FIRE  (0.1f)
+    #define TANK_DEFAULT_TIMER_IS_COOLING_FIRE  (0.05f)
     #define TANK_DEFAULT_TIMER_IS_LOADING_AMMO  (0.8f)
-
-    #define TANK_R_TO_SIZE_RATIO                (0.35f)
 
     float health;
     float timer_is_hit;
@@ -351,7 +366,6 @@ class Tank : public Sphere {
     bool set_is_hit(bool is_hit) {
         if (is_hit) {
             this->timer_is_hit = TANK_DEFAULT_TIMER_IS_HIT;
-            this->health -= 1.0f;
         }
         else {
             this->timer_is_hit = 0.0f;
@@ -359,11 +373,22 @@ class Tank : public Sphere {
         return true;
     }
 
+    bool reduce_health(float amount) {
+        if (this->health > 0.0f) {
+            this->health -= amount;
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+
     bool turn(float angle_xy) {
         this->angle_xy += angle_xy * this->turn_speed;
         return true;
     }
 
+    #define TANK_R_TO_BARREL_Z_RATIO            (0.54f)
     Ammo fire() {
         Ammo ammo;
         if (this->get_is_alive() == false || this->timer_is_cooling_fire > 0.0f || this->num_ammo <= 0) {
@@ -372,7 +397,7 @@ class Tank : public Sphere {
         else {
             this->timer_is_cooling_fire = TANK_DEFAULT_TIMER_IS_COOLING_FIRE;
             this->num_ammo --;
-            ammo = Ammo(this->x, this->y, this->z, this->r / 4.0f, this->angle_xy, this->angle_z, this->move_speed * 5.0f);
+            ammo = Ammo(this->x, this->y, this->z + this->r * TANK_R_TO_BARREL_Z_RATIO, this->r / 4.0f, this->angle_xy, this->angle_z, this->move_speed * 5.0f);
             ammo.move(ammo.get_angle_xy(), ammo.get_angle_z(), this->r + ammo.get_r());
         }
         return ammo;
@@ -400,6 +425,7 @@ class Tank : public Sphere {
         return true;
     }
 
+    #define TANK_R_TO_SIZE_RATIO                (0.35f)
     glm::mat4 get_model_matrix() const {
         glm::mat4 scale_mat = glm::scale(glm::mat4(1.0f), glm::vec3(this->r * TANK_R_TO_SIZE_RATIO, this->r * TANK_R_TO_SIZE_RATIO, this->r * TANK_R_TO_SIZE_RATIO));
         glm::mat4 trans_mat = glm::translate(glm::mat4(), glm::vec3(this->x, this->y, this->z));
@@ -500,8 +526,10 @@ static bool tank_move_and_check(Tank & tank, float angle_xy, float angle_z, floa
         return false;
     }
     for (int obst_idx = 0; obst_idx < env.obst_vec.size(); obst_idx ++) {
-        Obst const & obst = env.obst_vec[obst_idx];
+        Obst & obst = env.obst_vec[obst_idx];
         if (obst.get_is_activated() && Sphere::check_is_collided(tank, obst)) {
+            obst.set_is_hit(true);
+            obst.reduce_health(0.00001);
             tank.move(angle_xy, angle_z, -dist);
             return false;
         }
@@ -514,10 +542,14 @@ static bool tank_move_and_check(Tank & tank, float angle_xy, float angle_z, floa
             float dist_collided = 0.0f;
             Sphere::get_relation(tank, tank_collided, angle_xy_collided, angle_z_collided, dist_collided);
             dist_collided = tank.get_r() + tank_collided.get_r() - dist_collided;
+            tank_collided.set_is_hit(true);
+            tank_collided.reduce_health(0.00001);
             if (tank_move_and_check(tank_collided, angle_xy_collided, angle_z_collided, dist_collided, env, itr_cnt + 1)) {
                 break;
             }
             else {
+                tank.set_is_hit(true);
+                tank.reduce_health(0.00001);
                 tank.move(angle_xy, angle_z, -dist);
                 return false;
             }
@@ -539,6 +571,7 @@ static bool ammo_move_and_check(Ammo & ammo, float angle_xy, float angle_z, floa
         Obst & obst = env.obst_vec[obst_idx];
         if (obst.get_is_activated() && Sphere::check_is_collided(ammo, obst)) {
             obst.set_is_hit(true);
+            obst.reduce_health(1.0f);
             ammo.set_is_fired(false);
             return false;
         }
@@ -551,6 +584,7 @@ static bool ammo_move_and_check(Ammo & ammo, float angle_xy, float angle_z, floa
             float dist_collided = 0.0f;
             Sphere::get_relation(ammo, tank_collided, angle_xy_collided, angle_z_collided, dist_collided);
             tank_collided.set_is_hit(true);
+            tank_collided.reduce_health(1.0f);
             tank_move_and_check(tank_collided, angle_xy_collided, angle_z_collided, ammo.get_r(), env, 0);
             ammo.set_is_fired(false);
             return false;
@@ -568,7 +602,7 @@ static bool env_init(Environment_s & env) {
     for (int obst_idx = 0; obst_idx < 20; obst_idx ++) {
         float x = BOUND_X_MIN + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (BOUND_X_MAX - BOUND_X_MIN)));
         float y = BOUND_Y_MIN + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (BOUND_Y_MAX - BOUND_Y_MIN)));
-        float z = 0.0f;
+        float z = 1.0f;
         float r = 1.0f;
 
         Obst obstacle(x, y, z, r);
@@ -654,7 +688,7 @@ static void env_proc_main(Environment_s * p_arg) {
                     Obst & obst = p_arg->obst_vec[obst_idx];
                     if (obst.get_is_activated() && Sphere::check_is_collided(rain, obst)) {
                         obst.set_is_hit(true);
-
+                        obst.reduce_health(1.0f);
                         rain.set_is_fired(false);
                     }
                 }
@@ -665,7 +699,7 @@ static void env_proc_main(Environment_s * p_arg) {
                     Tank & tank = p_arg->tank_vec[tank_idx];
                     if (tank.get_is_alive() && Sphere::check_is_collided(rain, tank)) {
                         tank.set_is_hit(true);
-
+                        tank.reduce_health(1.0f);
                         rain.set_is_fired(false);
                     }
                 }
@@ -798,6 +832,9 @@ int main( void ) {
     std::vector<glm::vec3> obst_indexed_vertices;
     std::vector<glm::vec2> obst_indexed_uvs;
     std::vector<glm::vec3> obst_indexed_normals;
+    vertices.clear();
+    uvs.clear();
+    normals.clear();
     bool is_obst_loaded = loadOBJ("box.obj", vertices, uvs, normals);
     indexVBO(vertices, uvs, normals, obst_indices, obst_indexed_vertices, obst_indexed_uvs, obst_indexed_normals);
     if (is_obst_loaded == false)
@@ -834,7 +871,9 @@ int main( void ) {
     std::vector<glm::vec3> tank_indexed_vertices;
     std::vector<glm::vec2> tank_indexed_uvs;
     std::vector<glm::vec3> tank_indexed_normals;
-
+    vertices.clear();
+    uvs.clear();
+    normals.clear();
     bool is_tank_loaded = loadOBJ("tank.obj", vertices, uvs, normals);
     indexVBO(vertices, uvs, normals, tank_indices, tank_indexed_vertices, tank_indexed_uvs, tank_indexed_normals);
     if (is_tank_loaded == false)
@@ -876,11 +915,11 @@ int main( void ) {
     std::vector<glm::vec3> ammo_indexed_vertices;
     std::vector<glm::vec2> ammo_indexed_uvs;
     std::vector<glm::vec3> ammo_indexed_normals;
-
-    // bool is_ammo_loaded = loadOBJ("suzanne.obj", vertices, uvs, normals);
-    // indexVBO(vertices, uvs, normals, ammo_indices, ammo_indexed_vertices, ammo_indexed_uvs, ammo_indexed_normals);
-
-    bool is_ammo_loaded = loadAssImp("suzanne_ori.obj", ammo_indices, ammo_indexed_vertices, ammo_indexed_uvs, ammo_indexed_normals);
+    vertices.clear();
+    uvs.clear();
+    normals.clear();
+    bool is_ammo_loaded = loadOBJ("bomb.obj", vertices, uvs, normals);
+    indexVBO(vertices, uvs, normals, ammo_indices, ammo_indexed_vertices, ammo_indexed_uvs, ammo_indexed_normals);
     if (is_ammo_loaded == false)
     {
         printf("Failed to load ammo obj\n");
