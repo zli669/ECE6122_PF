@@ -26,6 +26,9 @@ View Features:
 - zoomable scene
 - multiple light (todo)
 
+Manu Feature:
+- display (todo)
+
 */
 
 
@@ -33,7 +36,6 @@ View Features:
 #include <stdio.h>
 #include <stdlib.h>
 #include <vector>
-#include <list>
 #include <thread>
 
 // Include GLEW
@@ -53,6 +55,7 @@ using namespace glm;
 #include <common/controls.hpp>
 #include <common/objloader.hpp>
 #include <common/vboindexer.hpp>
+
 
 #define MY_PI_HALF  (3.1415926f / 2.0f)
 #define BOUND_X_MIN     (-20.0f)
@@ -283,6 +286,8 @@ class Tank : public Sphere {
     #define TANK_DEFAULT_TIMER_IS_COOLING_FIRE  (0.1f)
     #define TANK_DEFAULT_TIMER_IS_LOADING_AMMO  (0.8f)
 
+    #define TANK_R_TO_SIZE_RATIO                (0.35f)
+
     float health;
     float timer_is_hit;
     float timer_is_cooling_fire;
@@ -385,7 +390,7 @@ class Tank : public Sphere {
     }
 
     glm::mat4 get_model_matrix() const {
-        glm::mat4 scale_mat = glm::scale(glm::mat4(1.0f), glm::vec3(this->r, this->r, this->r));
+        glm::mat4 scale_mat = glm::scale(glm::mat4(1.0f), glm::vec3(this->r * TANK_R_TO_SIZE_RATIO, this->r * TANK_R_TO_SIZE_RATIO, this->r * TANK_R_TO_SIZE_RATIO));
         glm::mat4 trans_mat = glm::translate(glm::mat4(), glm::vec3(this->x, this->y, this->z));
         glm::mat4 rotat_mat = glm::rotate( glm::mat4(1.0f), this->angle_xy, glm::vec3(0, 0, 1) );
         glm::mat4 model_mat = trans_mat * rotat_mat * scale_mat;
@@ -559,13 +564,13 @@ static bool env_init(Environment_s & env) {
         env.obst_vec.push_back(obstacle);
     }
 
-    for (int rain_idx = 0; rain_idx < 20; rain_idx ++) {
+    for (int rain_idx = 0; rain_idx < 0; rain_idx ++) {
         Ammo rain;
         env.rain_vec.push_back(rain);
     }
 
-    env.tank_vec.push_back(Tank(-5.0f, -5.0f, 0.0f, 1.0f));
-    env.tank_vec.push_back(Tank(5.0f, 5.0f, 0.0f, 1.0f));
+    env.tank_vec.push_back(Tank(-5.0f, -5.0f, 0.0f, 2.0f));
+    env.tank_vec.push_back(Tank(5.0f, 5.0f, 0.0f, 2.0f));
 
     return true;
 }
@@ -740,29 +745,23 @@ int main( void ) {
     GLuint ViewMatrixID = glGetUniformLocation(programID, "V");
     GLuint ModelMatrixID = glGetUniformLocation(programID, "M");
 
-    // Load the texture
-    GLuint Texture = loadDDS("uvmap.DDS");
-
-    // Load the texture
-    GLuint ground_texture = loadBMP_custom("spooky_scene.bmp");
-
     // Get a handle for our "myTextureSampler" uniform
     GLuint TextureID  = glGetUniformLocation(programID, "myTextureSampler");
 
-    // Read our .obj file
-    std::vector<unsigned short> indices;
-    std::vector<glm::vec3> indexed_vertices;
-    std::vector<glm::vec2> indexed_uvs;
-    std::vector<glm::vec3> indexed_normals;
-    bool res = loadAssImp("suzanne_ori.obj", indices, indexed_vertices, indexed_uvs, indexed_normals);
-    // bool res = loadAssImp("OBJ.obj", indices, indexed_vertices, indexed_uvs, indexed_normals);
-    if (res == false)
-    {
-        printf("Failed to load obj\n");
-    }
-    // Load it into a VBO
+    // Get a handle for our "LightPosition" uniform
+    GLuint LightID = glGetUniformLocation(programID, "LightPosition_worldspace");
 
+    GLuint ColorAddedID = glGetUniformLocation(programID, "MaterialDiffuseColor_Added");
 
+    std::vector<glm::vec3> vertices;
+    std::vector<glm::vec2> uvs;
+    std::vector<glm::vec3> normals;
+
+    /*****************************************************************************/
+    /******************************** LOAD GROUND ********************************/
+    /*****************************************************************************/
+
+    GLuint ground_texture = loadBMP_custom("ground.bmp");
 
     GLuint ground_vert_buf;
     glGenBuffers(1, &ground_vert_buf);
@@ -779,32 +778,128 @@ int main( void ) {
     glBindBuffer(GL_ARRAY_BUFFER, ground_norm_buf);
     glBufferData(GL_ARRAY_BUFFER, sizeof(g_ground_norm_buf_data), g_ground_norm_buf_data, GL_STATIC_DRAW);
 
+    /*****************************************************************************/
+    /******************************** LOAD OBST **********************************/
+    /*****************************************************************************/
+
+    GLuint obst_texture = loadDDS("uvmap.DDS");
+    std::vector<unsigned short> obst_indices;
+    std::vector<glm::vec3> obst_indexed_vertices;
+    std::vector<glm::vec2> obst_indexed_uvs;
+    std::vector<glm::vec3> obst_indexed_normals;
+    bool is_obst_loaded = loadAssImp("suzanne_ori.obj", obst_indices, obst_indexed_vertices, obst_indexed_uvs, obst_indexed_normals);
+    if (is_obst_loaded == false)
+    {
+        printf("Failed to load obj\n");
+    }
+
+    GLuint obst_vect_buf;
+    glGenBuffers(1, &obst_vect_buf);
+    glBindBuffer(GL_ARRAY_BUFFER, obst_vect_buf);
+    glBufferData(GL_ARRAY_BUFFER, obst_indexed_vertices.size() * sizeof(glm::vec3), &obst_indexed_vertices[0], GL_STATIC_DRAW);
+
+    GLuint obst_uv_buf;
+    glGenBuffers(1, &obst_uv_buf);
+    glBindBuffer(GL_ARRAY_BUFFER, obst_uv_buf);
+    glBufferData(GL_ARRAY_BUFFER, obst_indexed_uvs.size() * sizeof(glm::vec2), &obst_indexed_uvs[0], GL_STATIC_DRAW);
+
+    GLuint obst_norm_buf;
+    glGenBuffers(1, &obst_norm_buf);
+    glBindBuffer(GL_ARRAY_BUFFER, obst_norm_buf);
+    glBufferData(GL_ARRAY_BUFFER, obst_indexed_normals.size() * sizeof(glm::vec3), &obst_indexed_normals[0], GL_STATIC_DRAW);
+
+    GLuint obst_elem_buf;
+    glGenBuffers(1, &obst_elem_buf);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, obst_elem_buf);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, obst_indices.size() * sizeof(unsigned short), &obst_indices[0] , GL_STATIC_DRAW);
+
+    /*****************************************************************************/
+    /******************************** LOAD TANK **********************************/
+    /*****************************************************************************/
+
+    GLuint tank_texture = loadDDS("uvmap.DDS");
+    std::vector<unsigned short> tank_indices;
+    std::vector<glm::vec3> tank_indexed_vertices;
+    std::vector<glm::vec2> tank_indexed_uvs;
+    std::vector<glm::vec3> tank_indexed_normals;
+
+
+    bool is_tank_loaded = loadOBJ("tank.obj", vertices, uvs, normals);
+    indexVBO(vertices, uvs, normals, tank_indices, tank_indexed_vertices, tank_indexed_uvs, tank_indexed_normals);
+
+    // bool is_tank_loaded = loadAssImp("suzanne_ori.obj", tank_indices, tank_indexed_vertices, tank_indexed_uvs, tank_indexed_normals);
+    if (is_tank_loaded == false)
+    {
+        printf("Failed to load obj\n");
+    }
+
     GLuint tank_vect_buf;
     glGenBuffers(1, &tank_vect_buf);
     glBindBuffer(GL_ARRAY_BUFFER, tank_vect_buf);
-    glBufferData(GL_ARRAY_BUFFER, indexed_vertices.size() * sizeof(glm::vec3), &indexed_vertices[0], GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, tank_indexed_vertices.size() * sizeof(glm::vec3), &tank_indexed_vertices[0], GL_STATIC_DRAW);
 
     GLuint tank_uv_buf;
     glGenBuffers(1, &tank_uv_buf);
     glBindBuffer(GL_ARRAY_BUFFER, tank_uv_buf);
-    glBufferData(GL_ARRAY_BUFFER, indexed_uvs.size() * sizeof(glm::vec2), &indexed_uvs[0], GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, tank_indexed_uvs.size() * sizeof(glm::vec2), &tank_indexed_uvs[0], GL_STATIC_DRAW);
 
     GLuint tank_norm_buf;
     glGenBuffers(1, &tank_norm_buf);
     glBindBuffer(GL_ARRAY_BUFFER, tank_norm_buf);
-    glBufferData(GL_ARRAY_BUFFER, indexed_normals.size() * sizeof(glm::vec3), &indexed_normals[0], GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, tank_indexed_normals.size() * sizeof(glm::vec3), &tank_indexed_normals[0], GL_STATIC_DRAW);
 
-    // Generate a buffer for the indices as well
     GLuint tank_elem_buf;
     glGenBuffers(1, &tank_elem_buf);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, tank_elem_buf);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned short), &indices[0] , GL_STATIC_DRAW);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, tank_indices.size() * sizeof(unsigned short), &tank_indices[0] , GL_STATIC_DRAW);
 
-    // Get a handle for our "LightPosition" uniform
+
+
+    /*****************************************************************************/
+    /******************************** LOAD AMMO **********************************/
+    /*****************************************************************************/
+
+    GLuint ammo_texture = loadDDS("uvmap.DDS");
+    // GLuint ammo_texture = loadDDS("bullet.dds");
+
+    // Read our .obj file
+    std::vector<unsigned short> ammo_indices;
+    std::vector<glm::vec3> ammo_indexed_vertices;
+    std::vector<glm::vec2> ammo_indexed_uvs;
+    std::vector<glm::vec3> ammo_indexed_normals;
+
+    // bool is_ammo_loaded = loadOBJ("suzanne.obj", vertices, uvs, normals);
+    // indexVBO(vertices, uvs, normals, ammo_indices, ammo_indexed_vertices, ammo_indexed_uvs, ammo_indexed_normals);
+
+    bool is_ammo_loaded = loadAssImp("suzanne_ori.obj", ammo_indices, ammo_indexed_vertices, ammo_indexed_uvs, ammo_indexed_normals);
+    if (is_ammo_loaded == false)
+    {
+        printf("Failed to load ammo obj\n");
+    }
+
+    GLuint ammo_vect_buf;
+    glGenBuffers(1, &ammo_vect_buf);
+    glBindBuffer(GL_ARRAY_BUFFER, ammo_vect_buf);
+    glBufferData(GL_ARRAY_BUFFER, ammo_indexed_vertices.size() * sizeof(glm::vec3), &ammo_indexed_vertices[0], GL_STATIC_DRAW);
+
+    GLuint ammo_uv_buf;
+    glGenBuffers(1, &ammo_uv_buf);
+    glBindBuffer(GL_ARRAY_BUFFER, ammo_uv_buf);
+    glBufferData(GL_ARRAY_BUFFER, ammo_indexed_uvs.size() * sizeof(glm::vec2), &ammo_indexed_uvs[0], GL_STATIC_DRAW);
+
+    GLuint ammo_norm_buf;
+    glGenBuffers(1, &ammo_norm_buf);
+    glBindBuffer(GL_ARRAY_BUFFER, ammo_norm_buf);
+    glBufferData(GL_ARRAY_BUFFER, ammo_indexed_normals.size() * sizeof(glm::vec3), &ammo_indexed_normals[0], GL_STATIC_DRAW);
+
+    GLuint ammo_elem_buf;
+    glGenBuffers(1, &ammo_elem_buf);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ammo_elem_buf);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, ammo_indices.size() * sizeof(unsigned short), &ammo_indices[0] , GL_STATIC_DRAW);
+
+
+
     glUseProgram(programID);
-    GLuint LightID = glGetUniformLocation(programID, "LightPosition_worldspace");
-
-    GLuint ColorAddedID = glGetUniformLocation(programID, "MaterialDiffuseColor_Added");
 
     // For speed computation
     double lastTime = glfwGetTime();
@@ -859,10 +954,8 @@ int main( void ) {
         glUniformMatrix4fv(ViewMatrixID, 1, GL_FALSE, &ViewMatrix[0][0]);
         glUniform3f(ColorAddedID, 0.0f, 0.0f, 0.0f);
 
-        // Bind our texture in Texture Unit 0
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, ground_texture);
-        // Set our "myTextureSampler" sampler to use Texture Unit 0
         glUniform1i(TextureID, 0);
 
         // 1rst attribute buffer : vertices
@@ -902,17 +995,90 @@ int main( void ) {
         );
 
         // Draw the triangle !
-        glDrawArrays(GL_TRIANGLES, 0, 6*3); // 6*3 indices starting at 0 -> 6 triangles
+        glDrawArrays(GL_TRIANGLES, 0, 6*3);
 
         /*****************************************************************************/
-        /********************************* DRAW OBJS *********************************/
+        /********************************* DRAW OBST *********************************/
         /*****************************************************************************/
 
-        // Bind our texture in Texture Unit 0
         glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, Texture);
-        // Set our "myTextureSampler" sampler to use Texture Unit 0
+        glBindTexture(GL_TEXTURE_2D, obst_texture);
         glUniform1i(TextureID, 1);
+
+        // 1rst attribute buffer : vertices
+        glEnableVertexAttribArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, obst_vect_buf);
+        glVertexAttribPointer(
+            0,                  // attribute
+            3,                  // size
+            GL_FLOAT,           // type
+            GL_FALSE,           // normalized?
+            0,                  // stride
+            (void*)0            // array buffer offset
+        );
+
+        // 2nd attribute buffer : UVs
+        glEnableVertexAttribArray(1);
+        glBindBuffer(GL_ARRAY_BUFFER, obst_uv_buf);
+        glVertexAttribPointer(
+            1,                                // attribute
+            2,                                // size
+            GL_FLOAT,                         // type
+            GL_FALSE,                         // normalized?
+            0,                                // stride
+            (void*)0                          // array buffer offset
+        );
+
+        // 3rd attribute buffer : normals
+        glEnableVertexAttribArray(2);
+        glBindBuffer(GL_ARRAY_BUFFER, obst_norm_buf);
+        glVertexAttribPointer(
+            2,                                // attribute
+            3,                                // size
+            GL_FLOAT,                         // type
+            GL_FALSE,                         // normalized?
+            0,                                // stride
+            (void*)0                          // array buffer offset
+        );
+
+        // Index buffer
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, obst_elem_buf);
+
+        for (int obst_idx = 0; obst_idx < env.obst_vec.size(); obst_idx ++)
+        {
+            Obst const & obst = env.obst_vec[obst_idx];
+            if (obst.get_is_activated() == false) {
+                continue;
+            }
+            glm::mat4 obst_model_mat = obst.get_model_matrix(); //glm::mat4(1.0);
+            glm::mat4 obst_mvp_mat = ProjectionMatrix * ViewMatrix * obst_model_mat;
+
+            // Send our transformation to the currently bound shader,
+            // in the "MVP" uniform
+            glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &obst_mvp_mat[0][0]);
+            glUniformMatrix4fv(ModelMatrixID, 1, GL_FALSE, &obst_model_mat[0][0]);
+            glUniformMatrix4fv(ViewMatrixID, 1, GL_FALSE, &ViewMatrix[0][0]);
+            glUniform3f(ColorAddedID, 0.0f, 0.0f, 0.0f);
+            if (obst.get_is_hit()) {
+                glUniform3f(ColorAddedID, 255.0f, 0.0f, 0.0f);
+            }
+
+            // Draw the triangles !
+            glDrawElements(
+                GL_TRIANGLES,      // mode
+                obst_indices.size(),    // count
+                GL_UNSIGNED_SHORT,   // type
+                (void*)0           // element array buffer offset
+            );
+        }
+
+        /*****************************************************************************/
+        /********************************* DRAW TANK *********************************/
+        /*****************************************************************************/
+
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, tank_texture);
+        glUniform1i(TextureID, 2);
 
         // 1rst attribute buffer : vertices
         glEnableVertexAttribArray(0);
@@ -953,34 +1119,6 @@ int main( void ) {
         // Index buffer
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, tank_elem_buf);
 
-        for (int obst_idx = 0; obst_idx < env.obst_vec.size(); obst_idx ++)
-        {
-            Obst const & obst = env.obst_vec[obst_idx];
-            if (obst.get_is_activated() == false) {
-                continue;
-            }
-            glm::mat4 obst_model_mat = obst.get_model_matrix(); //glm::mat4(1.0);
-            glm::mat4 obst_mvp_mat = ProjectionMatrix * ViewMatrix * obst_model_mat;
-
-            // Send our transformation to the currently bound shader,
-            // in the "MVP" uniform
-            glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &obst_mvp_mat[0][0]);
-            glUniformMatrix4fv(ModelMatrixID, 1, GL_FALSE, &obst_model_mat[0][0]);
-            glUniformMatrix4fv(ViewMatrixID, 1, GL_FALSE, &ViewMatrix[0][0]);
-            glUniform3f(ColorAddedID, 0.0f, 0.0f, 0.0f);
-            if (obst.get_is_hit()) {
-                glUniform3f(ColorAddedID, 255.0f, 0.0f, 0.0f);
-            }
-
-            // Draw the triangles !
-            glDrawElements(
-                GL_TRIANGLES,      // mode
-                indices.size(),    // count
-                GL_UNSIGNED_SHORT,   // type
-                (void*)0           // element array buffer offset
-            );
-        }
-
         for (int tank_idx = 0; tank_idx < env.tank_vec.size(); tank_idx ++)
         {
             Tank const & tank = env.tank_vec[tank_idx];
@@ -1004,11 +1142,58 @@ int main( void ) {
             // Draw the triangles !
             glDrawElements(
                 GL_TRIANGLES,      // mode
-                indices.size(),    // count
+                tank_indices.size(),    // count
                 GL_UNSIGNED_SHORT,   // type
                 (void*)0           // element array buffer offset
             );
         }
+
+        /*****************************************************************************/
+        /********************************* DRAW AMMO *********************************/
+        /*****************************************************************************/
+
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, ammo_texture);
+        glUniform1i(TextureID, 3);
+
+        // 1rst attribute buffer : vertices
+        glEnableVertexAttribArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, ammo_vect_buf);
+        glVertexAttribPointer(
+            0,                  // attribute
+            3,                  // size
+            GL_FLOAT,           // type
+            GL_FALSE,           // normalized?
+            0,                  // stride
+            (void*)0            // array buffer offset
+        );
+
+        // 2nd attribute buffer : UVs
+        glEnableVertexAttribArray(1);
+        glBindBuffer(GL_ARRAY_BUFFER, ammo_uv_buf);
+        glVertexAttribPointer(
+            1,                                // attribute
+            2,                                // size
+            GL_FLOAT,                         // type
+            GL_FALSE,                         // normalized?
+            0,                                // stride
+            (void*)0                          // array buffer offset
+        );
+
+        // 3rd attribute buffer : normals
+        glEnableVertexAttribArray(2);
+        glBindBuffer(GL_ARRAY_BUFFER, ammo_norm_buf);
+        glVertexAttribPointer(
+            2,                                // attribute
+            3,                                // size
+            GL_FLOAT,                         // type
+            GL_FALSE,                         // normalized?
+            0,                                // stride
+            (void*)0                          // array buffer offset
+        );
+
+        // Index buffer
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ammo_elem_buf);
 
         for (int ammo_idx = 0; ammo_idx < env.ammo_vec.size(); ammo_idx ++)
         {
@@ -1028,12 +1213,12 @@ int main( void ) {
             glUniform3f(ColorAddedID, 0.0f, 0.0f, 0.0f);
 
             // Draw the triangles !
-            glDrawElements(
+             glDrawElements(
                 GL_TRIANGLES,      // mode
-                indices.size(),    // count
+                ammo_indices.size(),    // count
                 GL_UNSIGNED_SHORT,   // type
                 (void*)0           // element array buffer offset
-            );
+             );
         }
 
         for (int rain_idx = 0; rain_idx < env.rain_vec.size(); rain_idx ++)
@@ -1054,12 +1239,12 @@ int main( void ) {
             glUniform3f(ColorAddedID, 0.0f, 0.0f, 0.0f);
 
             // Draw the triangles !
-            glDrawElements(
+             glDrawElements(
                 GL_TRIANGLES,      // mode
-                indices.size(),    // count
+                ammo_indices.size(),    // count
                 GL_UNSIGNED_SHORT,   // type
                 (void*)0           // element array buffer offset
-            );
+             );
         }
 
         glDisableVertexAttribArray(0);
@@ -1075,18 +1260,32 @@ int main( void ) {
            glfwWindowShouldClose(window) == 0 );
 
 
+    glDeleteProgram(programID);
 
     // Cleanup VBO and shader
+    glDeleteTextures(1, &ground_texture);
     glDeleteBuffers(1, &ground_vert_buf);
     glDeleteBuffers(1, &ground_uv_buf);
     glDeleteBuffers(1, &ground_norm_buf);
 
+    glDeleteTextures(1, &obst_texture);
+    glDeleteBuffers(1, &obst_vect_buf);
+    glDeleteBuffers(1, &obst_uv_buf);
+    glDeleteBuffers(1, &obst_norm_buf);
+    glDeleteBuffers(1, &obst_elem_buf);
+
+    glDeleteTextures(1, &tank_texture);
     glDeleteBuffers(1, &tank_vect_buf);
     glDeleteBuffers(1, &tank_uv_buf);
     glDeleteBuffers(1, &tank_norm_buf);
     glDeleteBuffers(1, &tank_elem_buf);
-    glDeleteProgram(programID);
-    glDeleteTextures(1, &Texture);
+
+    glDeleteTextures(1, &ammo_texture);
+    glDeleteBuffers(1, &ammo_vect_buf);
+    glDeleteBuffers(1, &ammo_uv_buf);
+    glDeleteBuffers(1, &ammo_norm_buf);
+    glDeleteBuffers(1, &ammo_elem_buf);
+
     glDeleteVertexArrays(1, &VertexArrayID);
 
     // Close OpenGL window and terminate GLFW
