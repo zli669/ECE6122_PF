@@ -238,6 +238,17 @@ class Obst : public Sphere {
         }
         return true;
     }
+
+    #define OBST_TRANSLATE_OFFS_Y                   (0.7f)
+
+    glm::mat4 get_model_matrix() const {
+        glm::mat4 scale_mat = glm::scale(glm::mat4(1.0f), glm::vec3(this->r, this->r, this->r));
+        glm::mat4 trans_mat = glm::translate(glm::mat4(), glm::vec3(this->x, this->y, this->z + OBST_TRANSLATE_OFFS_Y));
+        glm::mat4 rotat_mat = glm::rotate( glm::mat4(1.0f), 0.0f, glm::vec3(0, 0, 1) );
+        glm::mat4 model_mat = trans_mat * rotat_mat * scale_mat;
+
+        return model_mat;
+    }
 };
 
 class Ammo : public Sphere {
@@ -782,12 +793,13 @@ int main( void ) {
     /******************************** LOAD OBST **********************************/
     /*****************************************************************************/
 
-    GLuint obst_texture = loadDDS("uvmap.DDS");
+    GLuint obst_texture = loadDDS("box.dds");
     std::vector<unsigned short> obst_indices;
     std::vector<glm::vec3> obst_indexed_vertices;
     std::vector<glm::vec2> obst_indexed_uvs;
     std::vector<glm::vec3> obst_indexed_normals;
-    bool is_obst_loaded = loadAssImp("suzanne_ori.obj", obst_indices, obst_indexed_vertices, obst_indexed_uvs, obst_indexed_normals);
+    bool is_obst_loaded = loadOBJ("box.obj", vertices, uvs, normals);
+    indexVBO(vertices, uvs, normals, obst_indices, obst_indexed_vertices, obst_indexed_uvs, obst_indexed_normals);
     if (is_obst_loaded == false)
     {
         printf("Failed to load obj\n");
@@ -817,17 +829,14 @@ int main( void ) {
     /******************************** LOAD TANK **********************************/
     /*****************************************************************************/
 
-    GLuint tank_texture = loadDDS("uvmap.DDS");
+    GLuint tank_texture = loadDDS("tank.dds");
     std::vector<unsigned short> tank_indices;
     std::vector<glm::vec3> tank_indexed_vertices;
     std::vector<glm::vec2> tank_indexed_uvs;
     std::vector<glm::vec3> tank_indexed_normals;
 
-
     bool is_tank_loaded = loadOBJ("tank.obj", vertices, uvs, normals);
     indexVBO(vertices, uvs, normals, tank_indices, tank_indexed_vertices, tank_indexed_uvs, tank_indexed_normals);
-
-    // bool is_tank_loaded = loadAssImp("suzanne_ori.obj", tank_indices, tank_indexed_vertices, tank_indexed_uvs, tank_indexed_normals);
     if (is_tank_loaded == false)
     {
         printf("Failed to load obj\n");
