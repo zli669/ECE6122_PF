@@ -6,13 +6,14 @@ Map Feature:
 Obstable Features:
 - path blocking for ammo and tank
 - destructable by ammo
+- destructable by collision
 
 Rain Feature:
 - random fall
-- shadow (todo)
+- better shadow (todo)
+- not showing on top of object (tofix)
 
 Ammo Feature:
-- hit indication effect
 - hit push effect on tank
 
 Tank Feature:
@@ -21,7 +22,11 @@ Tank Feature:
 - ammo quantity control
 - death control
 
+Special Feature:
+- collecting item (todo)
+
 View Features:
+- collision indication
 - rotatable scene
 - zoomable scene
 - multiple light (todo)
@@ -718,7 +723,7 @@ static void env_proc_main(Environment_s * p_arg) {
                 BOUND_X_MIN + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (BOUND_X_MAX - BOUND_X_MIN))),
                 BOUND_Y_MIN + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (BOUND_Y_MAX - BOUND_Y_MIN))),
                 BOUND_Z_MAX,
-                0.1f + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (0.5f - 0.1f))),
+                0.5f,
                 0.0f,
                 -MY_PI_HALF,
                 1.0f + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (5.0f - 1.0f))));
@@ -915,7 +920,7 @@ int main( void ) {
     /******************************** LOAD AMMO **********************************/
     /*****************************************************************************/
 
-    GLuint ammo_texture = loadDDS("uvmap.DDS");
+    GLuint ammo_texture = loadDDS("tank.dds");
     // GLuint ammo_texture = loadDDS("bullet.dds");
 
     // Read our .obj file
@@ -1301,6 +1306,77 @@ int main( void ) {
                 GL_UNSIGNED_SHORT,   // type
                 (void*)0           // element array buffer offset
              );
+        }
+
+        /*****************************************************************************/
+        /******************************* DRAW RAIN SHADOW ****************************/
+        /*****************************************************************************/
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, ground_texture);
+        glUniform1i(TextureID, 0);
+
+        // 1rst attribute buffer : vertices
+        glEnableVertexAttribArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, ground_vert_buf);
+        glVertexAttribPointer(
+            0,                  // attribute. No particular reason for 0, but must match the layout in the shader.
+            3,                  // size
+            GL_FLOAT,           // type
+            GL_FALSE,           // normalized?
+            0,                  // stride
+            (void*)0            // array buffer offset
+        );
+
+        // 2nd attribute buffer : UVs
+        glEnableVertexAttribArray(1);
+        glBindBuffer(GL_ARRAY_BUFFER, ground_uv_buf);
+        glVertexAttribPointer(
+            1,                                // attribute
+            2,                                // size
+            GL_FLOAT,                         // type
+            GL_FALSE,                         // normalized?
+            0,                                // stride
+            (void*)0                          // array buffer offset
+        );
+
+        // 3rd attribute buffer : normals
+        glEnableVertexAttribArray(2);
+        glBindBuffer(GL_ARRAY_BUFFER, ground_norm_buf);
+        glVertexAttribPointer(
+            2,                                // attribute
+            3,                                // size
+            GL_FLOAT,                         // type
+            GL_FALSE,                         // normalized?
+            0,                                // stride
+            (void*)0                          // array buffer offset
+        );
+
+
+
+        for (int rain_idx = 0; rain_idx < env.rain_vec.size(); rain_idx ++)
+        {
+            Ammo const & rain = env.rain_vec[rain_idx];
+            if (rain.get_is_fired() == false) {
+                continue;
+            }
+
+            #define RAIN_SPOT_Z_TO_SCALE(z)         (((BOUND_Z_MAX - z) / BOUND_Z_MAX) * 0.5f)
+            glm::mat4 spot_scale_mat = glm::scale(glm::mat4(1.0f), glm::vec3(RAIN_SPOT_Z_TO_SCALE(rain.get_z()), RAIN_SPOT_Z_TO_SCALE(rain.get_z()), RAIN_SPOT_Z_TO_SCALE(rain.get_z())));
+            glm::mat4 spot_rotat_mat = glm::rotate(glm::mat4(1.0f), 0.0f, glm::vec3(1, 0, 0));
+            glm::mat4 spot_trans_mat = glm::translate(glm::mat4(1.0f), glm::vec3(rain.get_x(), rain.get_y(), 0.01f));
+            glm::mat4 spot_model_mat = spot_trans_mat * spot_rotat_mat * spot_scale_mat;
+            glm::mat4 spot_mvp_mat = ProjectionMatrix * ViewMatrix * spot_model_mat;
+
+            // Send our transformation to the currently bound shader,
+            // in the "MVP" uniform
+            glUniformMatrix4fv(MatrixID, 1, GL_FALSE, &spot_mvp_mat[0][0]);
+            glUniformMatrix4fv(ModelMatrixID, 1, GL_FALSE, &spot_model_mat[0][0]);
+            glUniformMatrix4fv(ViewMatrixID, 1, GL_FALSE, &ViewMatrix[0][0]);
+            glUniform3f(ColorAddedID, 0.0f, 0.0f, 255.0f);
+
+             // Draw the triangle !
+            glDrawArrays(GL_TRIANGLES, 0, 6*3);
         }
 
         glDisableVertexAttribArray(0);
